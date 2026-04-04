@@ -1,39 +1,11 @@
 services:
-  # ─── Beast Stream Fan-out ───────────────────────────────────
-  # Feeder pushes Beast data INTO port 30004 (via router port-forward)
-  # Fan-out accepts that connection, then broadcasts to all subscribers on 40004
-  beast-fanout:
-    build: ./tcp-fanout
-    container_name: beast-fanout
-    restart: unless-stopped
-    environment:
-      # Fan-out listens for feeder on INGEST_PORT
-      # and re-broadcasts on LISTEN_PORT
-      INGEST_PORT: "30004"
-      LISTEN_PORT: "40004"
-    ports:
-      # Feeder pushes here (takes over from skylink)
-      - "30004:30004"
-      # Subscribers (prod/test) connect here
-      - "40004:40004"
-    networks:
-      - skynet
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 30004 && nc -z localhost 40004"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-
-  # ─── PRODUCTION ─────────────────────────────────────────────
+  # ─── PRODUCTION (owns :30004, receives all feeders) ─────────
   skylink:
     image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
     tty: true
     container_name: skylink
     hostname: skylink
     restart: unless-stopped
-    depends_on:
-      beast-fanout:
-        condition: service_healthy
     environment:
       - LOGLEVEL=error
       - TZ=${FEEDER_TZ}
@@ -51,8 +23,7 @@ services:
         --net-receiver-id
         --net-buffer 4
         --net-connector-delay 5
-      # Connects to fan-out for Beast data
-      - READSB_NET_CONNECTOR=beast-fanout,40004,beast_in;
+      - READSB_NET_CONNECTOR=192.168.11.10,30004,beast_in;
       - TAR1090_BINGMAPSAPIKEY=Alq7RH7qHgMmDk_L707lgKj7MNNQCwLiUSpauLs96M45remQCSBVA4Un5MBJA-Gc
       - TAR1090_PAGETITLE=Skylink
       - TAR1090_PLANECOUNTINTITLE=true
@@ -80,7 +51,7 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      # No more 30004 here - fan-out owns it
+      - 30004:30004/tcp
       - 30104:30104/tcp
       - 33003:30003
       - 32006:30006
@@ -91,7 +62,28 @@ services:
     security_opt:
       - apparmor:unconfined
 
-  # ─── TEST (same Beast data, isolated everything else) ───────
+  # ─── Beast Fan-out (taps prod's beast_out) ──────────────────
+  # Connects to prod:30005 (merged Beast output)
+  # Broadcasts identical stream to subscribers on :40004
+  beast-fanout:
+    build: ./tcp-fanout
+    container_name: beast-fanout
+    restart: unless-stopped
+    profiles:
+      - test
+    depends_on:
+      skylink:
+        condition: service_healthy
+    environment:
+      UPSTREAM_HOST: skylink
+      UPSTREAM_PORT: "30005"
+      LISTEN_PORT: "40004"
+    ports:
+      - "40004:40004"
+    networks:
+      - skynet
+
+  # ─── TEST (gets clean merged Beast from fan-out) ────────────
   skylink-test:
     image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
     tty: true
@@ -102,7 +94,7 @@ services:
       - test
     depends_on:
       beast-fanout:
-        condition: service_healthy
+        condition: service_started
     environment:
       - LOGLEVEL=error
       - TZ=${FEEDER_TZ}
@@ -119,7 +111,7 @@ services:
         --net-receiver-id
         --net-buffer 4
         --net-connector-delay 5
-      # Same fan-out, identical Beast stream
+      # Connects to fan-out which taps prod's beast_out
       - READSB_NET_CONNECTOR=beast-fanout,40004,beast_in;
       - TAR1090_PAGETITLE=Skylink TEST
       - TAR1090_PLANECOUNTINTITLE=true
