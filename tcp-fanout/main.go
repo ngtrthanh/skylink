@@ -1,28 +1,25 @@
 package main
 
-// Beast TCP fan-out modeled after readsb net_io.c pattern:
-// - Per-client send queue (slow clients don't block fast ones)
-// - Drop data for lagging clients instead of disconnecting
-// - TCP keepalive for connection health
-// - Heartbeat when idle to keep connections alive
+// Beast splitter: accepts N feeders on ingest port, broadcasts to N subscribers on output port
+// Per-client sendq, drop-half for slow subscribers, heartbeat on idle
 
 import (
 	"fmt"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	sendqMax       = 256 * 1024 // per-client send buffer
-	readBuf        = 16384      // upstream read buffer
-	writeTimeout   = 5 * time.Second
-	heartbeatIdle  = 30 * time.Second
-	dropHalfWindow = 2 * time.Second
+	sendqMax      = 256 * 1024
+	readBuf       = 16384
+	writeTimeout  = 5 * time.Second
+	heartbeatIdle = 30 * time.Second
+	dropWindow    = 2 * time.Second
 )
 
-// Beast heartbeat: 0x1a '1' + 9 zero bytes
 var beastHeartbeat = []byte{0x1a, 0x31, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 
 type subscriber struct {
@@ -32,33 +29,24 @@ type subscriber struct {
 	lastSend  time.Time
 	dropUntil time.Time
 	dropFlip  bool
-	bytesIn   uint64
-	bytesOut  uint64
 }
 
 func (s *subscriber) enqueue(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	now := time.Now()
-
-	// Drop half pattern: if client is lagging, skip every other write
 	if now.Before(s.dropUntil) {
 		s.dropFlip = !s.dropFlip
 		if s.dropFlip {
 			return
 		}
 	}
-
 	if len(s.sendq)+len(data) > sendqMax {
-		// Buffer full — drop this chunk and enable drop-half
-		s.dropUntil = now.Add(dropHalfWindow)
+		s.dropUntil = now.Add(dropWindow)
 		s.dropFlip = true
 		return
 	}
-
 	s.sendq = append(s.sendq, data...)
-	s.bytesIn += uint64(len(data))
 }
 
 func (s *subscriber) flush() error {
@@ -70,31 +58,35 @@ func (s *subscriber) flush() error {
 	buf := s.sendq
 	s.sendq = make([]byte, 0, sendqMax/4)
 	s.mu.Unlock()
-
 	s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	n, err := s.conn.Write(buf)
-	if n > 0 {
+	_, err := s.conn.Write(buf)
+	if err == nil {
 		s.lastSend = time.Now()
-		s.bytesOut += uint64(n)
 	}
 	return err
 }
 
 var (
-	subs   []*subscriber
-	subsMu sync.RWMutex
+	subs      []*subscriber
+	subsMu    sync.RWMutex
+	feedCount atomic.Int32
+	bytesIn   atomic.Uint64
 )
+
+func broadcast(data []byte) {
+	subsMu.RLock()
+	for _, s := range subs {
+		s.enqueue(data)
+	}
+	subsMu.RUnlock()
+}
 
 func addSub(conn net.Conn) *subscriber {
 	if tc, ok := conn.(*net.TCPConn); ok {
 		tc.SetKeepAlive(true)
 		tc.SetKeepAlivePeriod(30 * time.Second)
 	}
-	s := &subscriber{
-		conn:     conn,
-		sendq:    make([]byte, 0, sendqMax/4),
-		lastSend: time.Now(),
-	}
+	s := &subscriber{conn: conn, sendq: make([]byte, 0, sendqMax/4), lastSend: time.Now()}
 	subsMu.Lock()
 	subs = append(subs, s)
 	subsMu.Unlock()
@@ -113,111 +105,84 @@ func removeSub(target *subscriber) {
 	target.conn.Close()
 }
 
-func broadcast(data []byte) {
-	subsMu.RLock()
-	for _, s := range subs {
-		s.enqueue(data)
+func handleFeeder(conn net.Conn) {
+	addr := conn.RemoteAddr().String()
+	feedCount.Add(1)
+	if tc, ok := conn.(*net.TCPConn); ok {
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(30 * time.Second)
 	}
-	subsMu.RUnlock()
-}
-
-// Flush loop: periodically push sendq to each client
-func flushLoop() {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	hbTicker := time.NewTicker(heartbeatIdle)
+	// Send Beast heartbeat on connect so feeder knows we're alive
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	conn.Write(beastHeartbeat)
+	buf := make([]byte, readBuf)
 	for {
-		select {
-		case <-ticker.C:
-			subsMu.RLock()
-			for _, s := range subs {
-				if err := s.flush(); err != nil {
-					go removeSub(s)
-				}
-			}
-			subsMu.RUnlock()
-		case <-hbTicker.C:
-			// Send heartbeat to idle clients
-			subsMu.RLock()
-			for _, s := range subs {
-				if time.Since(s.lastSend) > heartbeatIdle {
-					s.enqueue(beastHeartbeat)
-				}
-			}
-			subsMu.RUnlock()
+		n, err := conn.Read(buf)
+		if n > 0 {
+			bytesIn.Add(uint64(n))
+			data := make([]byte, n)
+			copy(data, buf[:n])
+			broadcast(data)
 		}
-	}
-}
-
-func connectUpstream(addr string) {
-	for {
-		fmt.Printf("[fanout] connecting to %s...\n", addr)
-		conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 		if err != nil {
-			fmt.Printf("[fanout] connect failed: %v\n", err)
-			time.Sleep(5 * time.Second)
-			continue
+			feedCount.Add(-1)
+			conn.Close()
+			fmt.Printf("[splitter] feeder lost: %s\n", addr)
+			return
 		}
-		fmt.Printf("[fanout] upstream connected\n")
-		if tc, ok := conn.(*net.TCPConn); ok {
-			tc.SetKeepAlive(true)
-			tc.SetKeepAlivePeriod(30 * time.Second)
-		}
-
-		buf := make([]byte, readBuf)
-		for {
-			n, err := conn.Read(buf)
-			if n > 0 {
-				data := make([]byte, n)
-				copy(data, buf[:n])
-				broadcast(data)
-			}
-			if err != nil {
-				fmt.Printf("[fanout] upstream lost: %v\n", err)
-				conn.Close()
-				break
-			}
-		}
-		time.Sleep(5 * time.Second)
 	}
 }
 
 func main() {
-	host := os.Getenv("UPSTREAM_HOST")
-	port := os.Getenv("UPSTREAM_PORT")
-	listen := os.Getenv("LISTEN_PORT")
-	if host == "" {
-		host = "skylink"
+	ingestPort := os.Getenv("INGEST_PORT")
+	listenPort := os.Getenv("LISTEN_PORT")
+	if ingestPort == "" {
+		ingestPort = "30004"
 	}
-	if port == "" {
-		port = "30005"
-	}
-	if listen == "" {
-		listen = "40004"
+	if listenPort == "" {
+		listenPort = "40004"
 	}
 
-	ln, err := net.Listen("tcp", ":"+listen)
+	ingestLn, err := net.Listen("tcp", ":"+ingestPort)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "listen failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ingest listen failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("[fanout] listening :%s → upstream %s:%s\n", listen, host, port)
 
-	go flushLoop()
+	subLn, err := net.Listen("tcp", ":"+listenPort)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "output listen failed: %v\n", err)
+		os.Exit(1)
+	}
 
+	fmt.Printf("[splitter] ingest :%s → output :%s\n", ingestPort, listenPort)
+
+	// Accept feeders
 	go func() {
 		for {
-			conn, err := ln.Accept()
+			conn, err := ingestLn.Accept()
+			if err != nil {
+				continue
+			}
+			go handleFeeder(conn)
+		}
+	}()
+
+	// Accept subscribers
+	go func() {
+		for {
+			conn, err := subLn.Accept()
 			if err != nil {
 				continue
 			}
 			s := addSub(conn)
-			fmt.Printf("[fanout] +sub %s (total %d)\n", conn.RemoteAddr(), len(subs))
+			fmt.Printf("[splitter] +sub %s (total %d)\n", conn.RemoteAddr(), len(subs))
 			go func() {
 				buf := make([]byte, 1)
 				for {
 					conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 					if _, err := conn.Read(buf); err != nil {
-						fmt.Printf("[fanout] -sub %s\n", conn.RemoteAddr())
+						fmt.Printf("[splitter] -sub %s\n", conn.RemoteAddr())
 						removeSub(s)
 						return
 					}
@@ -226,14 +191,25 @@ func main() {
 		}
 	}()
 
-	// Stats
-	go func() {
-		for range time.Tick(60 * time.Second) {
+	// Flush + heartbeat + stats
+	flushTick := time.NewTicker(50 * time.Millisecond)
+	statsTick := time.NewTicker(60 * time.Second)
+	for {
+		select {
+		case <-flushTick.C:
 			subsMu.RLock()
-			fmt.Printf("[fanout] subs=%d\n", len(subs))
+			for _, s := range subs {
+				if err := s.flush(); err != nil {
+					go removeSub(s)
+				}
+			}
 			subsMu.RUnlock()
+		case <-statsTick.C:
+			subsMu.RLock()
+			n := len(subs)
+			subsMu.RUnlock()
+			fmt.Printf("[splitter] feeders=%d subs=%d in=%.1fMB\n",
+				feedCount.Load(), n, float64(bytesIn.Load())/1048576)
 		}
-	}()
-
-	connectUpstream(host + ":" + port)
+	}
 }

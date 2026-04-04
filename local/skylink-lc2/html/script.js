@@ -144,7 +144,6 @@ let perfLastUpdateVisible = 0;
 let perfLastMapRefresh = 0;
 const PERF_UV_MIN_INTERVAL = 150;  // ms min between updateVisible calls
 const PERF_MR_MIN_INTERVAL = 200;  // ms min between mapRefresh calls
-const PERF_MAP_PLANE_CAP = 4000;   // max planes rendered on map at once
 
 
 let baroCorrectQNH = 1013.25;
@@ -5870,14 +5869,13 @@ function mapRefresh(redraw) {
     let count = 0;
     const planes = g.planesOrdered;
     const len = planes.length;
-    const planeCap = PERF_MAP_PLANE_CAP;
 
     if (globeIndex && !icaoFilter) {
         for (let i = 0; i < len; i++) {
             count++;
             const plane = planes[i];
             delete plane.glMarker;
-            if (plane.selected || (plane.inView && plane.visible && nMapPlanes < planeCap && (!onMobile || webgl || (nMapPlanes < 150 && (!plane.onGround || g.zoomLvl > 10))))) {
+            if (plane.selected || (plane.inView && plane.visible && (!onMobile || webgl || (nMapPlanes < 150 && (!plane.onGround || g.zoomLvl > 10))))) {
                 addToMap.push(plane);
                 nMapPlanes++;
             } else {
