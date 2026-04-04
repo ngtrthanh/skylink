@@ -41,6 +41,7 @@ services:
       - ./data/graphs1090:/var/lib/collectd
       - ./local/skylink-lc2:/var/tar1090_git_source
       - ./data/globe_history:/var/globe_history
+      - ./local/skylink-lc2/nginx-perf.conf:/etc/nginx/conf.d/perf.conf:ro
       - /proc/diskstats:/proc/diskstats:ro
     tmpfs:
       - /run:exec,size=3G
