@@ -59,9 +59,14 @@ func handleUpstream(addr string) {
 		}
 		fmt.Printf("[fanout] upstream connected (%s)\n", addr)
 
-		buf := make([]byte, 16384) // larger buffer for Beast protocol efficiency
+		// Enable TCP keepalive instead of read deadline
+		if tc, ok := upstream.(*net.TCPConn); ok {
+			tc.SetKeepAlive(true)
+			tc.SetKeepAlivePeriod(30 * time.Second)
+		}
+
+		buf := make([]byte, 16384)
 		for {
-			upstream.SetReadDeadline(time.Now().Add(60 * time.Second))
 			n, err := upstream.Read(buf)
 			if n > 0 {
 				stats.bytesIn += uint64(n)
