@@ -137,7 +137,14 @@ let lastRequestBox = '';
 let nextQuerySelected = 0;
 let enableDynamicCachebusting = false;
 g.lastRefreshInt = 1000;
-let reapTimeout = globeIndex ? 240 : 480;
+let reapTimeout = globeIndex ? 180 : 300;
+
+// -- Performance: high aircraft count throttling --
+let perfLastUpdateVisible = 0;
+let perfLastMapRefresh = 0;
+const PERF_UV_MIN_INTERVAL = 150;  // ms min between updateVisible calls
+const PERF_MR_MIN_INTERVAL = 200;  // ms min between mapRefresh calls
+const PERF_MAP_PLANE_CAP = 4000;   // max planes rendered on map at once
 
 
 let baroCorrectQNH = 1013.25;
@@ -339,8 +346,10 @@ function processReceiverUpdate(data, init) {
     }
 
     // Loop through all the planes in the data packet
-    for (let j=0; j < data.aircraft.length; j++) {
-        processAircraft(data.aircraft[j], init, uat);
+    const aircraft = data.aircraft;
+    const acLen = aircraft.length;
+    for (let j = 0; j < acLen; j++) {
+        processAircraft(aircraft[j], init, uat);
     }
 }
 function fetchFail(jqxhr, status, error) {
@@ -3202,10 +3211,14 @@ function reaper(all) {
 
     // Look for planes where we have seen no messages for >300 seconds
     let plane;
-    let length = g.planesOrdered.length;
-    let temp = []
-    for (let i in g.planesOrdered) {
-        plane = g.planesOrdered[i];
+    const planes = g.planesOrdered;
+    let length = planes.length;
+    let temp = [];
+    // Pre-allocate to reduce GC pressure
+    if (!all) temp.length = length;
+    let writeIdx = 0;
+    for (let i = 0; i < length; i++) {
+        plane = planes[i];
         if (plane == null)
             continue;
         plane.seen = now - plane.last_message_time;
@@ -3218,27 +3231,29 @@ function reaper(all) {
             )
         ) {
             // Reap it.
-            //console.log("Removed " + plane.icao);
             delete g.planes[plane.icao];
             plane.destroy();
             continue;
         }
 
         // Keep it.
-        temp.push(plane);
+        if (all) {
+            temp.push(plane);
+        } else {
+            temp[writeIdx++] = plane;
+        }
 
         if (globeIndex) {
             if (plane.clearTraceAfter) {
-                //console.log(now - plane.clearTraceAfter);
                 if (now > plane.clearTraceAfter) {
                     plane.clearTrace();
-                    //console.log("clearTrace: " + plane.icao);
                 }
             } else if (!plane.linesDrawn) {
                 plane.clearTraceAfter = now + 300;
             }
         }
     }
+    if (!all) temp.length = writeIdx;
     g.planesOrdered = temp;
 
     reapInProgress = false;
@@ -5768,7 +5783,8 @@ function checkRefresh() {
     if (zoom != refreshZoom || !refreshCenter || center[0] != refreshCenter[0] || center[1] != refreshCenter[1]) {
         const ts = new Date().getTime();
         const elapsed = Math.abs(ts - lastRefresh);
-        let num = Math.min(1500, Math.max(250, TrackedAircraftPositions / 300 * 250));
+        // Scale minimum refresh interval with aircraft count to avoid overload
+        let num = Math.min(2000, Math.max(350, TrackedAircraftPositions / 200 * 250));
         if (elapsed > num) {
             refresh();
         }
@@ -5817,14 +5833,23 @@ function refreshFilter() {
 
 
 function updateVisible() {
+    // Throttle: skip if called too frequently under high load
+    const ts = performance.now();
+    if (g.planesOrdered.length > 2000 && ts - perfLastUpdateVisible < PERF_UV_MIN_INTERVAL) {
+        return;
+    }
+    perfLastUpdateVisible = ts;
+
     if (mapIsVisible || !lastRenderExtent) {
         lastRenderExtent = getRenderExtent();
     }
     aircraftShown = 0;
-    for (let i in g.planesOrdered) {
-        const plane = g.planesOrdered[i];
+    const planes = g.planesOrdered;
+    const len = planes.length;
+    for (let i = 0; i < len; i++) {
+        const plane = planes[i];
         plane.updateVisible();
-        aircraftShown += (plane.visible && plane.inView);
+        aircraftShown += (plane.visible & plane.inView);
     }
     checkScale();
 }
@@ -5832,17 +5857,27 @@ function updateVisible() {
 function mapRefresh(redraw) {
     if (!mapIsVisible || heatmap)
         return;
+
+    // Throttle: skip if called too frequently under high load
+    const ts = performance.now();
+    if (g.planesOrdered.length > 2000 && ts - perfLastMapRefresh < PERF_MR_MIN_INTERVAL) {
+        return;
+    }
+    perfLastMapRefresh = ts;
+
     let addToMap = [];
     let nMapPlanes = 0;
     let count = 0;
+    const planes = g.planesOrdered;
+    const len = planes.length;
+    const planeCap = PERF_MAP_PLANE_CAP;
 
     if (globeIndex && !icaoFilter) {
-        for (let i in g.planesOrdered) {
+        for (let i = 0; i < len; i++) {
             count++;
-            const plane = g.planesOrdered[i];
+            const plane = planes[i];
             delete plane.glMarker;
-            // disable mobile limitations when using webGL
-            if (plane.selected || (plane.inView && plane.visible && (!onMobile || webgl || (nMapPlanes < 150 && (!plane.onGround || g.zoomLvl > 10))))) {
+            if (plane.selected || (plane.inView && plane.visible && nMapPlanes < planeCap && (!onMobile || webgl || (nMapPlanes < 150 && (!plane.onGround || g.zoomLvl > 10))))) {
                 addToMap.push(plane);
                 nMapPlanes++;
             } else {
@@ -5851,8 +5886,8 @@ function mapRefresh(redraw) {
             }
         }
     } else {
-        for (let i in g.planesOrdered) {
-            const plane = g.planesOrdered[i];
+        for (let i = 0; i < len; i++) {
+            const plane = planes[i];
             delete plane.glMarker;
             addToMap.push(plane);
         }
@@ -5878,9 +5913,13 @@ function mapRefresh(redraw) {
 }
 
 function onPointermove(evt) {
-    //clearTimeout(pointerMoveTimeout);
-    //pointerMoveTimeout = setTimeout(highlight(evt), 100);
-    highlight(evt);
+    // Throttle pointer move events under high aircraft load
+    if (g.planesOrdered.length > 3000) {
+        clearTimeout(pointerMoveTimeout);
+        pointerMoveTimeout = setTimeout(function() { highlight(evt); }, 80);
+    } else {
+        highlight(evt);
+    }
 }
 
 function highlight(evt) {
@@ -6546,6 +6585,11 @@ function refreshInt() {
         refresh *= 1.5;
     } else if (onMobile && TrackedAircraftPositions > 800) {
         refresh *= 1.5;
+    }
+
+    // High aircraft count: scale refresh interval to reduce CPU load
+    if (TrackedAircraftPositions > 3000) {
+        refresh *= Math.min(3, TrackedAircraftPositions / 3000);
     }
 
     if (document.visibilityState === 'hidden') { refresh *= 4; } // in case visibility change events don't work, reduce refresh rate if visibilityState works

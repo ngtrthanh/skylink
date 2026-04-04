@@ -1407,8 +1407,9 @@ PlaneObject.prototype.updatePositionData = function (now, last, data, init) {
                 track: this.track,
                 rotation: this.rotation,
             });
-            if (this.trace.length > 100) {
-                this.trace = this.trace.slice(-80);
+            // Use splice instead of slice to avoid creating a new array every time
+            if (this.trace.length > 80) {
+                this.trace.splice(0, this.trace.length - 60);
             }
         }
     }
@@ -2251,9 +2252,10 @@ PlaneObject.prototype.destroy = function () {
     deselect(this);
     this.destroyTR();
     this.destroyTrace();
-    for (let key in Object.keys(this)) {
-        delete this[key];
-    }
+    // Nullify references for GC instead of expensive Object.keys iteration
+    this.trace = null;
+    this.track_linesegs = null;
+    this.position = null;
 };
 
 function calcAltitudeRounded(altitude) {

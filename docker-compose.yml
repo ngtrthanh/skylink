@@ -20,6 +20,8 @@ services:
         --net-api-port unix:/run/readsb/api.sock
         --net-ingest
         --net-receiver-id
+        --net-buffer 4
+        --net-connector-delay 5
       - READSB_NET_CONNECTOR=192.168.11.10,30004,beast_in;
       #192.168.11.10,30005,beast_in;
       # TAR1090 (Map Web Page) parameters:
@@ -29,7 +31,7 @@ services:
       - TAR1090_MESSAGERATEINTITLE=true
       - TAR1090_MAPTYPE_TAR1090=Stadia_Alidade_Smooth
       - TAR1090_MAPDIM=false
-      - GZIP_LVL=3
+      - GZIP_LVL=1
       - TAR1090_FLIGHTAWARELINKS=true
       - TAR1090_ENABLE_AC_DB=true
       - UPDATE_TAR1090=true
@@ -41,7 +43,7 @@ services:
       - ./data/globe_history:/var/globe_history
       - /proc/diskstats:/proc/diskstats:ro
     tmpfs:
-      - /run:exec
+      - /run:exec,size=256M
       - /tmp:size=2G
       - /var/log:size=64M
     ulimits:

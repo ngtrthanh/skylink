@@ -4,6 +4,17 @@
 //
 // --------------------------------------------------------
 "use strict";
+
+// -- Performance Tuning for High Message Rate (400k/s, 11k aircraft) --
+// Reduce table rows to limit DOM overhead
+globeTableLimitBase = 150;
+// Faster reaping of stale aircraft
+reapInterval = 30;
+// Limit trail history to reduce memory/GC pressure
+tempTrailsTimeout = 90;
+// Reduce icon cache churn
+iconCacheRecycle = 1500;
+
 // -- Title Settings --------------------------------------
 // Show number of aircraft and/or messages per second in the page title
 //PlaneCountInTitle = false;
@@ -103,9 +114,9 @@ MapType_tar1090 = "OpenFreeMapPositron";
 // webglIconOpacity = 1.0;
 // webglIconMapMoveOpacity = 1.0;
 
-// if more than by default 2000 aircraft are on the screen, reduce icon opacity when moving the screen:
-// webglIconMapMoveOpacityCrowded = 0.25;
-// webglIconMapMoveOpacityCrowdedThreshold = 2000;
+// Tuned for 11k aircraft: lower crowded threshold for earlier opacity reduction
+webglIconMapMoveOpacityCrowded = 0.15;
+webglIconMapMoveOpacityCrowdedThreshold = 1500;
 
 // different marker size depending on zoom lvl
 // markerZoomDivide = 8.5;
