@@ -1,0 +1,150 @@
+services:
+  # ─── Beast Stream Fan-out ───────────────────────────────────
+  # Single connection to feeder, broadcasts to N subscribers
+  beast-fanout:
+    build: ./tcp-fanout
+    container_name: beast-fanout
+    restart: unless-stopped
+    environment:
+      UPSTREAM_HOST: 192.168.11.10
+      UPSTREAM_PORT: "30004"
+      LISTEN_PORT: "40004"
+    ports:
+      - "40004:40004"
+    networks:
+      - skynet
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "40004"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ─── PRODUCTION ─────────────────────────────────────────────
+  skylink:
+    image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
+    tty: true
+    container_name: skylink
+    hostname: skylink
+    restart: unless-stopped
+    depends_on:
+      beast-fanout:
+        condition: service_healthy
+    environment:
+      - LOGLEVEL=error
+      - TZ=${FEEDER_TZ}
+      - READSB_ENABLE_API=true
+      - GRAPHS1090_DISABLE=false
+      - MAX_GLOBE_HISTORY=2
+      - READSB_EXTRA_ARGS=
+        --quiet
+        --write-json-globe-index
+        --heatmap=0
+        --write-globe-history /var/globe_history --json-trace-interval 60
+        --tar1090-use-api
+        --net-api-port unix:/run/readsb/api.sock
+        --net-ingest
+        --net-receiver-id
+        --net-buffer 4
+        --net-connector-delay 5
+      # Connect to fan-out instead of feeder directly
+      - READSB_NET_CONNECTOR=beast-fanout,40004,beast_in;
+      - TAR1090_BINGMAPSAPIKEY=Alq7RH7qHgMmDk_L707lgKj7MNNQCwLiUSpauLs96M45remQCSBVA4Un5MBJA-Gc
+      - TAR1090_PAGETITLE=Skylink
+      - TAR1090_PLANECOUNTINTITLE=true
+      - TAR1090_MESSAGERATEINTITLE=true
+      - TAR1090_MAPTYPE_TAR1090=Stadia_Alidade_Smooth
+      - TAR1090_MAPDIM=false
+      - GZIP_LVL=1
+      - TAR1090_FLIGHTAWARELINKS=true
+      - TAR1090_ENABLE_AC_DB=true
+      - UPDATE_TAR1090=true
+      - TAR1090_USEROUTEAPI=false
+      - GRAPHS1090_DARKMODE=false
+    volumes:
+      - ./data/graphs1090:/var/lib/collectd
+      - ./local/skylink-lc2:/var/tar1090_git_source
+      - ./data/globe_history:/var/globe_history
+      - ./local/skylink-lc2/nginx-perf.conf:/etc/nginx/conf.d/perf.conf:ro
+      - /proc/diskstats:/proc/diskstats:ro
+    tmpfs:
+      - /run:exec,size=3G
+      - /tmp:size=2G
+      - /var/log:size=64M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 30004:30004/tcp
+      - 30104:30104/tcp
+      - 33003:30003
+      - 32006:30006
+      - 33005:30005/tcp
+      - 31787:80
+    networks:
+      - skynet
+    security_opt:
+      - apparmor:unconfined
+
+  # ─── TEST (same image, same data, isolated config) ──────────
+  skylink-test:
+    image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
+    tty: true
+    container_name: skylink-test
+    hostname: skylink-test
+    restart: unless-stopped
+    profiles:
+      - test
+    depends_on:
+      beast-fanout:
+        condition: service_healthy
+    environment:
+      - LOGLEVEL=error
+      - TZ=${FEEDER_TZ}
+      - READSB_ENABLE_API=true
+      - GRAPHS1090_DISABLE=true
+      - MAX_GLOBE_HISTORY=0
+      - READSB_EXTRA_ARGS=
+        --quiet
+        --write-json-globe-index
+        --heatmap=0
+        --tar1090-use-api
+        --net-api-port unix:/run/readsb/api.sock
+        --net-ingest
+        --net-receiver-id
+        --net-buffer 4
+        --net-connector-delay 5
+      # Same fan-out, identical Beast stream
+      - READSB_NET_CONNECTOR=beast-fanout,40004,beast_in;
+      - TAR1090_PAGETITLE=Skylink TEST
+      - TAR1090_PLANECOUNTINTITLE=true
+      - TAR1090_MESSAGERATEINTITLE=true
+      - TAR1090_MAPTYPE_TAR1090=Stadia_Alidade_Smooth
+      - TAR1090_MAPDIM=false
+      - GZIP_LVL=1
+      - TAR1090_ENABLE_AC_DB=true
+      - UPDATE_TAR1090=true
+      - TAR1090_USEROUTEAPI=false
+    volumes:
+      # TEST uses its own source directory for tuned code
+      - ./local/skylink-test:/var/tar1090_git_source
+      - ./local/skylink-lc2/nginx-perf.conf:/etc/nginx/conf.d/perf.conf:ro
+    tmpfs:
+      - /run:exec,size=3G
+      - /tmp:size=1G
+      - /var/log:size=32M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 31788:80
+    networks:
+      - skynet
+    security_opt:
+      - apparmor:unconfined
+
+networks:
+  skynet:
+    name: skynet
+    external: true
