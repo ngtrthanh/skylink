@@ -1,20 +1,25 @@
 services:
   # ─── Beast Stream Fan-out ───────────────────────────────────
-  # Single connection to feeder, broadcasts to N subscribers
+  # Feeder pushes Beast data INTO port 30004 (via router port-forward)
+  # Fan-out accepts that connection, then broadcasts to all subscribers on 40004
   beast-fanout:
     build: ./tcp-fanout
     container_name: beast-fanout
     restart: unless-stopped
     environment:
-      UPSTREAM_HOST: 192.168.11.10
-      UPSTREAM_PORT: "30004"
+      # Fan-out listens for feeder on INGEST_PORT
+      # and re-broadcasts on LISTEN_PORT
+      INGEST_PORT: "30004"
       LISTEN_PORT: "40004"
     ports:
+      # Feeder pushes here (takes over from skylink)
+      - "30004:30004"
+      # Subscribers (prod/test) connect here
       - "40004:40004"
     networks:
       - skynet
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "40004"]
+      test: ["CMD-SHELL", "nc -z localhost 30004 && nc -z localhost 40004"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -46,7 +51,7 @@ services:
         --net-receiver-id
         --net-buffer 4
         --net-connector-delay 5
-      # Connect to fan-out instead of feeder directly
+      # Connects to fan-out for Beast data
       - READSB_NET_CONNECTOR=beast-fanout,40004,beast_in;
       - TAR1090_BINGMAPSAPIKEY=Alq7RH7qHgMmDk_L707lgKj7MNNQCwLiUSpauLs96M45remQCSBVA4Un5MBJA-Gc
       - TAR1090_PAGETITLE=Skylink
@@ -75,7 +80,7 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - 30004:30004/tcp
+      # No more 30004 here - fan-out owns it
       - 30104:30104/tcp
       - 33003:30003
       - 32006:30006
@@ -86,7 +91,7 @@ services:
     security_opt:
       - apparmor:unconfined
 
-  # ─── TEST (same image, same data, isolated config) ──────────
+  # ─── TEST (same Beast data, isolated everything else) ───────
   skylink-test:
     image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
     tty: true
@@ -126,7 +131,6 @@ services:
       - UPDATE_TAR1090=true
       - TAR1090_USEROUTEAPI=false
     volumes:
-      # TEST uses its own source directory for tuned code
       - ./local/skylink-test:/var/tar1090_git_source
       - ./local/skylink-lc2/nginx-perf.conf:/etc/nginx/conf.d/perf.conf:ro
     tmpfs:
