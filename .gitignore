@@ -1,0 +1,12 @@
+data/
+zOLD/
+*.txt
+*.txtps
+filebeat.yml/
+local/skylink-lc2/html/libs/
+local/skylink-lc2/html/bct/
+local/skylink-lc2/html/db2/
+local/skylink-lc2/html/monitor/
+local/skylink-lc2/html/images/sprites.png
+local/skylink-lc2/html/planeObject_af5ba05f4e2e36f88f5de438f8eecb85.js
+icondb/
