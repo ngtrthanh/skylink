@@ -1,4 +1,32 @@
 services:
+  # ─── readsb fanout: accepts all feeders, outputs clean merged Beast ───
+  readsb-fanout:
+    image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
+    container_name: readsb-fanout
+    hostname: readsb-fanout
+    restart: unless-stopped
+    environment:
+      - TZ=${FEEDER_TZ}
+      - LOGLEVEL=error
+      - READSB_ENABLE_API=false
+      - GRAPHS1090_DISABLE=true
+      - TAR1090_DISABLE=true
+      - READSB_EXTRA_ARGS=--quiet --net --net-only --net-bi-port=30004 --net-bo-port=30005 --net-beast-reduce-out-port=30006 --net-ingest --net-receiver-id --net-buffer 4 --net-heartbeat 30
+    tmpfs:
+      - /run:exec,size=64M
+      - /tmp:size=64M
+      - /var/log:size=16M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 30004:30004/tcp
+    networks:
+      - skynet
+    security_opt:
+      - apparmor:unconfined
+
   # ─── PRODUCTION ─────────────────────────────────────────────
   skylink:
     image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
@@ -6,6 +34,8 @@ services:
     container_name: skylink
     hostname: skylink
     restart: unless-stopped
+    depends_on:
+      - readsb-fanout
     environment:
       - LOGLEVEL=error
       - TZ=${FEEDER_TZ}
@@ -19,11 +49,10 @@ services:
         --write-globe-history /var/globe_history --json-trace-interval 60
         --tar1090-use-api
         --net-api-port unix:/run/readsb/api.sock
-        --net-ingest
         --net-receiver-id
         --net-buffer 4
         --net-connector-delay 5
-      - READSB_NET_CONNECTOR=192.168.11.10,30004,beast_in;
+      - READSB_NET_CONNECTOR=readsb-fanout,30005,beast_in;
       - TAR1090_BINGMAPSAPIKEY=Alq7RH7qHgMmDk_L707lgKj7MNNQCwLiUSpauLs96M45remQCSBVA4Un5MBJA-Gc
       - TAR1090_PAGETITLE=Skylink
       - TAR1090_PLANECOUNTINTITLE=true
@@ -51,7 +80,6 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - 30004:30004/tcp
       - 30104:30104/tcp
       - 33003:30003
       - 32006:30006
@@ -62,7 +90,7 @@ services:
     security_opt:
       - apparmor:unconfined
 
-  # ─── TEST (taps prod beast_out directly, no fan-out needed) ─
+  # ─── TEST ───────────────────────────────────────────────────
   skylink-test:
     image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
     tty: true
@@ -72,8 +100,7 @@ services:
     profiles:
       - test
     depends_on:
-      skylink:
-        condition: service_healthy
+      - readsb-fanout
     environment:
       - LOGLEVEL=error
       - TZ=${FEEDER_TZ}
@@ -86,12 +113,10 @@ services:
         --heatmap=0
         --tar1090-use-api
         --net-api-port unix:/run/readsb/api.sock
-        --net-ingest
         --net-receiver-id
         --net-buffer 4
         --net-connector-delay 5
-      # Connects directly to prod's beast_out
-      - READSB_NET_CONNECTOR=skylink,30005,beast_in;
+      - READSB_NET_CONNECTOR=readsb-fanout,30005,beast_in;
       - TAR1090_PAGETITLE=Skylink TEST
       - TAR1090_PLANECOUNTINTITLE=true
       - TAR1090_MESSAGERATEINTITLE=true
