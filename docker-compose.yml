@@ -43,7 +43,7 @@ services:
       - ./data/globe_history:/var/globe_history
       - /proc/diskstats:/proc/diskstats:ro
     tmpfs:
-      - /run:exec,size=256M
+      - /run:exec,size=3G
       - /tmp:size=2G
       - /var/log:size=64M
     ulimits:
