@@ -2506,6 +2506,7 @@ function ol_map_init() {
             center: ol.proj.fromLonLat([CenterLon, CenterLat]),
             zoom: g.zoomLvl,
             multiWorld: true,
+            extent: ol.proj.transformExtent([-180, -90, 180, 90], 'EPSG:4326', 'EPSG:3857'),
         }),
         controls: [new ol.control.Zoom({delta: 1, duration: 0, target: 'map_canvas',}),
             new ol.control.Attribution({collapsed: true}),
