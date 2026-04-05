@@ -20,6 +20,7 @@ services:
         --net-api-port unix:/run/readsb/api.sock
         --net-ingest
         --net-receiver-id
+        --write-receiver-id-json
         --net-buffer 4
         --net-connector-delay 5
       - READSB_NET_CONNECTOR=192.168.11.10,30004,beast_in;

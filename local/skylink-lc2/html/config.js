@@ -4,6 +4,14 @@
 //
 // --------------------------------------------------------
 "use strict";
+
+// Load receiver overlay after map init
+window.addEventListener('load', function() {
+  var s = document.createElement('script');
+  s.src = 'receivers-overlay.js?v=' + Date.now();
+  document.body.appendChild(s);
+});
+
 // -- Title Settings --------------------------------------
 // Show number of aircraft and/or messages per second in the page title
 //PlaneCountInTitle = false;
