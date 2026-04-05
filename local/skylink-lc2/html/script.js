@@ -6298,10 +6298,10 @@ function myExtent(extent) {
     let topRight = ol.proj.toLonLat([extent[2], extent[3]]);
     return {
         extent: extent,
-        minLon: bottomLeft[0],
-        maxLon: topRight[0],
-        minLat: bottomLeft[1],
-        maxLat: topRight[1],
+        minLon: Math.max(-180, Math.min(180, bottomLeft[0])),
+        maxLon: Math.max(-180, Math.min(180, topRight[0])),
+        minLat: Math.max(-90, Math.min(90, bottomLeft[1])),
+        maxLat: Math.max(-90, Math.min(90, topRight[1])),
     }
 }
 
