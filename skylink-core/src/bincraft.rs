@@ -7,6 +7,10 @@ use std::sync::Arc;
 const STRIDE: u32 = 112;
 const VERSION: u32 = 20250403;
 
+pub fn encode_aircraft_pub(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
+    encode_aircraft(icao, ac, now_s)
+}
+
 fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
     let mut rec = [0u8; 112];
     let seen_10 = ((now_s - ac.last_update) * 10.0) as i32;

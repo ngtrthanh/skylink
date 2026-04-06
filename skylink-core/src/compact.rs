@@ -66,6 +66,10 @@ fn build_inner(store: &Arc<Store>, bbox: Option<(f64, f64, f64, f64)>) -> Vec<u8
     buf
 }
 
+pub fn encode_compact_pub(icao: u32, ac: &Aircraft, now_s: f64, buf: &mut Vec<u8>) {
+    encode_compact(icao, ac, now_s, buf)
+}
+
 fn encode_compact(icao: u32, ac: &Aircraft, now_s: f64, buf: &mut Vec<u8>) {
     // ICAO (3 bytes)
     buf.push((icao >> 16) as u8);

@@ -76,10 +76,21 @@ pub struct Store {
     /// Pre-built protobuf response
     pub pb_cache: RwLock<bytes::Bytes>,
     pub messages_total: std::sync::atomic::AtomicU64,
+    pub clients: RwLock<Vec<ClientInfo>>,
+    pub receivers_cache: RwLock<bytes::Bytes>,
+    pub start_time: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ClientInfo {
+    pub addr: String,
+    pub connected_at: f64,
+    pub messages: u64,
 }
 
 impl Store {
     pub fn new() -> Self {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
         Self {
             map: DashMap::with_capacity(16384),
             json_cache: RwLock::new(bytes::Bytes::from_static(b"{\"now\":0,\"messages\":0,\"aircraft\":[]}")),
@@ -91,6 +102,9 @@ impl Store {
             compact_zstd_cache: RwLock::new(bytes::Bytes::new()),
             pb_cache: RwLock::new(bytes::Bytes::new()),
             messages_total: std::sync::atomic::AtomicU64::new(0),
+            clients: RwLock::new(Vec::new()),
+            receivers_cache: RwLock::new(bytes::Bytes::from_static(b"[]")),
+            start_time: now,
         }
     }
 
