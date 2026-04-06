@@ -13,27 +13,20 @@ async fn main() {
 
     let store = Arc::new(state::AircraftStore::new());
 
-    info!("skylink-core starting");
+    let ingest_port: u16 = std::env::var("INGEST_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(39004);
+    let output_port: u16 = std::env::var("OUTPUT_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(39005);
+    let api_port: u16 = std::env::var("API_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(19180);
 
-    // Spawn Beast TCP ingest (port 30004)
-    let ingest_store = store.clone();
-    tokio::spawn(async move {
-        beast::ingest::serve(ingest_store, 30004).await;
-    });
+    info!("skylink-core starting (ingest:{} output:{} api:{})", ingest_port, output_port, api_port);
 
-    // Spawn Beast TCP output (port 30005)
-    let output_store = store.clone();
-    tokio::spawn(async move {
-        output::beast_out::serve(output_store, 30005).await;
-    });
+    let s = store.clone();
+    tokio::spawn(async move { beast::ingest::serve(s, ingest_port).await; });
 
-    // Spawn reaper (remove stale aircraft)
-    let reaper_store = store.clone();
-    tokio::spawn(async move {
-        state::reaper::run(reaper_store).await;
-    });
+    let s = store.clone();
+    tokio::spawn(async move { output::beast_out::serve(s, output_port).await; });
 
-    // HTTP API (port 8080) — blocks main task
-    info!("API listening on :8080");
-    api::serve(store, 8080).await;
+    let s = store.clone();
+    tokio::spawn(async move { state::reaper::run(s).await; });
+
+    api::serve(store, api_port).await;
 }
