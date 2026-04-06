@@ -1,15 +1,8 @@
-/// TCP output services: Beast, BeastReduce, SBS, Raw, JSON position
-///
-/// Each service listens on a port, accepts subscribers, and broadcasts
-/// data from a tokio::sync::broadcast channel.
-
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
-use crate::aircraft::Store;
 
 /// All broadcast channels for output services
 pub struct OutputChannels {

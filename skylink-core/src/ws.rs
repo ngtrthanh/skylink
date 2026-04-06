@@ -6,7 +6,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
 use tokio::time::{interval, Duration};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::aircraft::Store;
 use crate::compact;

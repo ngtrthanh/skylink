@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::info;
 
 use crate::aircraft::Store;
 use crate::output::OutputChannels;

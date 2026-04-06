@@ -6,7 +6,6 @@ use tower_http::cors::CorsLayer;
 use tracing::info;
 
 use crate::aircraft::Store;
-use crate::bincraft;
 
 async fn aircraft_compact(State(store): State<Arc<Store>>) -> Response {
     let raw = crate::compact::build(&store);
