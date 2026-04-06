@@ -5,7 +5,13 @@ use crate::aircraft::Store;
 use crate::bincraft;
 
 fn zstd3(data: &[u8]) -> Vec<u8> {
-    zstd::encode_all(data, 3).unwrap_or_default()
+    use std::io::Write;
+    let mut out = Vec::with_capacity(data.len() / 2);
+    let mut encoder = zstd::Encoder::new(&mut out, 3).unwrap();
+    encoder.set_pledged_src_size(Some(data.len() as u64)).unwrap();
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap();
+    out
 }
 
 /// Periodically rebuild all caches (every 1s)

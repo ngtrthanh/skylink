@@ -360,8 +360,18 @@ fn json_response(body: String) -> Response {
 }
 
 fn serve_binary(raw: Vec<u8>, use_zstd: bool, ct: &'static str) -> Response {
-    let body = if use_zstd { zstd::encode_all(raw.as_slice(), 3).unwrap_or(raw) } else { raw };
+    let body = if use_zstd { zstd_with_size(&raw) } else { raw };
     (StatusCode::OK, [(header::CONTENT_TYPE, ct), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], body).into_response()
+}
+
+fn zstd_with_size(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut out = Vec::with_capacity(data.len() / 2);
+    let mut enc = zstd::Encoder::new(&mut out, 3).unwrap();
+    enc.set_pledged_src_size(Some(data.len() as u64)).unwrap();
+    enc.write_all(data).unwrap();
+    enc.finish().unwrap();
+    out
 }
 
 fn now_secs() -> f64 {
