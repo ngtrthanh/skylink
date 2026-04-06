@@ -19,8 +19,10 @@ fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
     write_i32(&mut rec, 4, seen_10);
 
     if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
-        write_i32(&mut rec, 8, (lon * 1e6) as i32);
-        write_i32(&mut rec, 12, (lat * 1e6) as i32);
+        if ac.last_pos_update > 0.0 && (now_s - ac.last_pos_update) < 60.0 {
+            write_i32(&mut rec, 8, (lon * 1e6) as i32);
+            write_i32(&mut rec, 12, (lat * 1e6) as i32);
+        }
     }
 
     if let Some(vr) = ac.baro_rate { write_i16(&mut rec, 16, (vr as f64 / 8.0) as i16); }
@@ -64,10 +66,11 @@ fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
     // Validity bits
     let mut v73: u8 = 0;
     if let Some(v) = ac.nic_baro { v73 |= v & 1; }
+    let pos_fresh = ac.lat.is_some() && ac.last_pos_update > 0.0 && (now_s - ac.last_pos_update) < 60.0;
     if ac.flight.is_some() { v73 |= 8; }
     if ac.alt_baro.is_some() { v73 |= 16; }
     if ac.alt_geom.is_some() { v73 |= 32; }
-    if ac.lat.is_some() { v73 |= 64; }
+    if pos_fresh { v73 |= 64; }
     if ac.gs.is_some() { v73 |= 128; }
     rec[73] = v73;
 
@@ -115,7 +118,7 @@ fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
         rec[105] = ((rssi + 50.0) * (255.0 / 50.0)).clamp(0.0, 255.0) as u8;
     }
 
-    if ac.lat.is_some() && ac.last_pos_update > 0.0 { write_i32(&mut rec, 108, ((now_s - ac.last_pos_update) * 10.0) as i32); }
+    if pos_fresh { write_i32(&mut rec, 108, ((now_s - ac.last_pos_update) * 10.0) as i32); }
 
     rec
 }

@@ -257,9 +257,14 @@ impl Store {
             if let Some(v) = ac.geom_rate { buf.push(b','); write_int(&mut buf, "geom_rate", v); }
             if let Some(ref v) = ac.squawk { buf.push(b','); write_str(&mut buf, "squawk", v); }
             if let Some(ref v) = ac.category { buf.push(b','); write_str(&mut buf, "category", v); }
-            if let Some(v) = ac.lat { buf.push(b','); write_float(&mut buf, "lat", v); }
-            if let Some(v) = ac.lon { buf.push(b','); write_float(&mut buf, "lon", v); }
-            if let Some(ref v) = ac.source_type { buf.push(b','); write_str(&mut buf, "type", v); }
+            if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
+                if ac.last_pos_update > 0.0 && (t - ac.last_pos_update) < 60.0 {
+                    buf.push(b','); write_float(&mut buf, "lat", lat);
+                    buf.push(b','); write_float(&mut buf, "lon", lon);
+                    if let Some(ref v) = ac.source_type { buf.push(b','); write_str(&mut buf, "type", v); }
+                    buf.push(b','); write_float(&mut buf, "seen_pos", t - ac.last_pos_update);
+                }
+            }
             if let Some(v) = ac.ias { buf.push(b','); write_int(&mut buf, "ias", v as i32); }
             if let Some(v) = ac.tas { buf.push(b','); write_int(&mut buf, "tas", v as i32); }
             if let Some(v) = ac.mach { buf.push(b','); write_float(&mut buf, "mach", v); }
@@ -280,7 +285,6 @@ impl Store {
             if let Some(v) = ac.sda { buf.push(b','); write_int(&mut buf, "sda", v as i32); }
             if let Some(v) = ac.adsb_version { buf.push(b','); write_int(&mut buf, "version", v as i32); }
             buf.push(b','); write_float(&mut buf, "seen", t - ac.last_update);
-            if ac.lat.is_some() && ac.last_pos_update > 0.0 { buf.push(b','); write_float(&mut buf, "seen_pos", t - ac.last_pos_update); }
             if let Some(v) = ac.rssi { buf.push(b','); write_float(&mut buf, "rssi", v); }
             buf.push(b','); write_u64(&mut buf, "messages", ac.messages);
             buf.push(b'}');
