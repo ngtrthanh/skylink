@@ -115,7 +115,7 @@ fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
         rec[105] = ((rssi + 50.0) * (255.0 / 50.0)).clamp(0.0, 255.0) as u8;
     }
 
-    if ac.lat.is_some() { write_i32(&mut rec, 108, seen_10); }
+    if ac.lat.is_some() && ac.last_pos_update > 0.0 { write_i32(&mut rec, 108, ((now_s - ac.last_pos_update) * 10.0) as i32); }
 
     rec
 }

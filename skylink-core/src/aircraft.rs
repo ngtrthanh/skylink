@@ -59,6 +59,7 @@ pub struct Aircraft {
     #[serde(skip)] pub cpr_even: Option<(u32, u32, f64)>,
     #[serde(skip)] pub cpr_odd: Option<(u32, u32, f64)>,
     #[serde(skip)] pub last_update: f64,
+    #[serde(skip)] pub last_pos_update: f64,
     #[serde(skip)] pub trace: Vec<TracePoint>,
 }
 
@@ -140,7 +141,7 @@ impl Store {
             nic: None, nac_p: None, nac_v: None, sil: None, sil_type: None,
             gva: None, sda: None, nic_baro: None, adsb_version: None,
             addr_type: 0,
-            cpr_even: None, cpr_odd: None, last_update: t,
+            cpr_even: None, cpr_odd: None, last_update: t, last_pos_update: 0.0,
             trace: Vec::new(),
         });
         let ac = entry.value_mut();
@@ -200,6 +201,7 @@ impl Store {
                             ac.lat = Some((lat * 1e6).round() / 1e6);
                             ac.lon = Some((lon * 1e6).round() / 1e6);
                             ac.seen_pos = Some(0.0);
+                            ac.last_pos_update = t;
 
                             // Record trace point (max 1 per 4s, cap at 1000 points ~1hr)
                             let dominated = ac.trace.last().map(|p| t - p.ts < 4.0).unwrap_or(false);
@@ -278,7 +280,7 @@ impl Store {
             if let Some(v) = ac.sda { buf.push(b','); write_int(&mut buf, "sda", v as i32); }
             if let Some(v) = ac.adsb_version { buf.push(b','); write_int(&mut buf, "version", v as i32); }
             buf.push(b','); write_float(&mut buf, "seen", t - ac.last_update);
-            if ac.lat.is_some() { buf.push(b','); write_float(&mut buf, "seen_pos", t - ac.last_update); }
+            if ac.lat.is_some() && ac.last_pos_update > 0.0 { buf.push(b','); write_float(&mut buf, "seen_pos", t - ac.last_pos_update); }
             if let Some(v) = ac.rssi { buf.push(b','); write_float(&mut buf, "rssi", v); }
             buf.push(b','); write_u64(&mut buf, "messages", ac.messages);
             buf.push(b'}');

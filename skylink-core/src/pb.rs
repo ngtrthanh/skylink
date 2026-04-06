@@ -17,6 +17,45 @@ pub fn build_filtered(store: &Arc<Store>, south: f64, north: f64, west: f64, eas
 }
 
 fn make_ac_meta(icao: u32, ac: &crate::aircraft::Aircraft, seen_ms: u64, now_s: f64) -> readsb::AircraftMeta {
+    // Build valid_source — tells FE which fields are populated
+    // eDataSource: 0=Invalid, 1=ADSB, 2=MLAT, etc
+    let src = |opt: bool| -> u32 { if opt { 1 } else { 0 } };
+    let valid_source = readsb::aircraft_meta::ValidSource {
+        callsign: src(ac.flight.is_some()),
+        altitude: src(ac.alt_baro.is_some()),
+        alt_geom: src(ac.alt_geom.is_some()),
+        gs: src(ac.gs.is_some()),
+        ias: src(ac.ias.is_some()),
+        tas: src(ac.tas.is_some()),
+        mach: src(ac.mach.is_some()),
+        track: src(ac.track.is_some()),
+        track_rate: src(ac.track_rate.is_some()),
+        roll: src(ac.roll.is_some()),
+        mag_heading: src(ac.mag_heading.is_some()),
+        true_heading: src(ac.true_heading.is_some()),
+        baro_rate: src(ac.baro_rate.is_some()),
+        geom_rate: src(ac.geom_rate.is_some()),
+        squawk: src(ac.squawk.is_some()),
+        emergency: src(ac.emergency.is_some()),
+        nav_qnh: src(ac.nav_qnh.is_some()),
+        nav_altitude_mcp: src(ac.nav_altitude_mcp.is_some()),
+        nav_altitude_fms: src(ac.nav_altitude_fms.is_some()),
+        nav_heading: src(ac.nav_heading.is_some()),
+        nav_modes: src(ac.nav_modes.is_some()),
+        lat: src(ac.lat.is_some()),
+        lon: src(ac.lon.is_some()),
+        nic: src(ac.nic.is_some()),
+        rc: 0,
+        nic_baro: src(ac.nic_baro.is_some()),
+        nac_p: src(ac.nac_p.is_some()),
+        nac_v: src(ac.nac_v.is_some()),
+        sil: src(ac.sil.is_some()),
+        sil_type: src(ac.sil_type.is_some()),
+        gva: src(ac.gva.is_some()),
+        sda: src(ac.sda.is_some()),
+        wind: 0, // we don't decode wind yet
+    };
+
     readsb::AircraftMeta {
         addr: icao,
         flight: ac.flight.clone().unwrap_or_default(),
@@ -45,10 +84,12 @@ fn make_ac_meta(icao: u32, ac: &crate::aircraft::Aircraft, seen_ms: u64, now_s: 
         gva: ac.gva.unwrap_or(0) as u32, sda: ac.sda.unwrap_or(0) as u32,
         nic_baro: ac.nic_baro.unwrap_or(0) as u32,
         version: ac.adsb_version.map(|v| v as i32).unwrap_or(-1),
-        seen_pos: ac.seen_pos.map(|_| (now_s - ac.last_update) as u32).unwrap_or(0),
+        seen_pos: if ac.last_pos_update > 0.0 { (now_s - ac.last_pos_update) as u32 } else { 0 },
         air_ground: if ac.lat.is_some() { 2 } else { 0 },
         emergency: ac.emergency.unwrap_or(0) as i32,
         addr_type: ac.addr_type as i32,
+        nav_modes: Some(readsb::aircraft_meta::NavModes::default()),
+        valid_source: Some(valid_source),
         ..Default::default()
     }
 }
