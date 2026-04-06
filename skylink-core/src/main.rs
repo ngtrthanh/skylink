@@ -6,6 +6,8 @@ mod bincraft;
 mod output;
 mod feed;
 mod pb;
+mod compact;
+mod ws;
 
 use std::sync::Arc;
 use tracing::info;

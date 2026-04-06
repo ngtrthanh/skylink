@@ -8,6 +8,12 @@ use tracing::info;
 use crate::aircraft::Store;
 use crate::bincraft;
 
+async fn aircraft_compact(State(store): State<Arc<Store>>) -> Response {
+    let raw = crate::compact::build(&store);
+    let body = zstd::encode_all(raw.as_slice(), 3).unwrap_or(raw);
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/octet-stream"), (header::CACHE_CONTROL, "no-cache")], body).into_response()
+}
+
 /// Serve pre-built JSON from cache — zero serialization on request
 async fn aircraft_json(State(store): State<Arc<Store>>) -> Response {
     let body = store.json_cache.read().clone();
@@ -37,6 +43,17 @@ async fn re_api(State(store): State<Arc<Store>>, axum::extract::Query(params): a
         let p: Vec<f64> = b.split(',').filter_map(|s| s.parse().ok()).collect();
         if p.len() == 4 { Some((p[0], p[1], p[2], p[3])) } else { None }
     });
+
+    if params.contains_key("compact") {
+        let (raw, cached) = match bbox {
+            Some((s, n, w, e)) => (crate::compact::build_filtered(&store, s, n, w, e), None),
+            None => (vec![], Some(if use_zstd { store.compact_zstd_cache.read().clone() } else { store.compact_cache.read().clone() })),
+        };
+        if let Some(c) = cached {
+            return (StatusCode::OK, [(header::CONTENT_TYPE, "application/octet-stream"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], c).into_response();
+        }
+        return serve_binary(raw, use_zstd, "application/octet-stream");
+    }
 
     if params.contains_key("binCraft") {
         let (raw, zstd_cached) = match bbox {
@@ -132,6 +149,8 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/data/aircraft.pb.zst", get(aircraft_pb_zstd))
         .route("/data/receiver.json", get(receiver_json))
         .route("/re-api/", get(re_api))
+        .route("/data/aircraft.compact", get(aircraft_compact))
+        .route("/ws", get(crate::ws::ws_handler))
         .route("/stats", get(stats))
         .layer(CorsLayer::permissive())
         .with_state(store);

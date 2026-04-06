@@ -71,6 +71,8 @@ pub struct Store {
     pub json_zstd_cache: RwLock<bytes::Bytes>,
     pub bincraft_zstd_cache: RwLock<bytes::Bytes>,
     pub pb_zstd_cache: RwLock<bytes::Bytes>,
+    pub compact_cache: RwLock<bytes::Bytes>,
+    pub compact_zstd_cache: RwLock<bytes::Bytes>,
     /// Pre-built protobuf response
     pub pb_cache: RwLock<bytes::Bytes>,
     pub messages_total: std::sync::atomic::AtomicU64,
@@ -85,6 +87,8 @@ impl Store {
             json_zstd_cache: RwLock::new(bytes::Bytes::new()),
             bincraft_zstd_cache: RwLock::new(bytes::Bytes::new()),
             pb_zstd_cache: RwLock::new(bytes::Bytes::new()),
+            compact_cache: RwLock::new(bytes::Bytes::new()),
+            compact_zstd_cache: RwLock::new(bytes::Bytes::new()),
             pb_cache: RwLock::new(bytes::Bytes::new()),
             messages_total: std::sync::atomic::AtomicU64::new(0),
         }

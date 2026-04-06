@@ -25,5 +25,9 @@ pub async fn run(store: Arc<Store>) {
         let pb = crate::pb::build_aircraft_pb(&store);
         *store.pb_zstd_cache.write() = bytes::Bytes::from(zstd3(&pb));
         *store.pb_cache.write() = bytes::Bytes::from(pb);
+
+        let cpt = crate::compact::build(&store);
+        *store.compact_zstd_cache.write() = bytes::Bytes::from(zstd3(&cpt));
+        *store.compact_cache.write() = bytes::Bytes::from(cpt);
     }
 }
