@@ -32,6 +32,12 @@ pub struct Aircraft {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rssi: Option<f64>,
     pub messages: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub squawk: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
 
     // CPR state (not serialized)
     #[serde(skip)]
@@ -67,6 +73,9 @@ impl Aircraft {
             seen_pos: None,
             rssi: None,
             messages: 0,
+            squawk: None,
+            category: None,
+            source_type: None,
             cpr_even_lat: None,
             cpr_even_lon: None,
             cpr_even_time: 0.0,
@@ -125,6 +134,11 @@ impl AircraftStore {
         if let Some(t) = u.track { ac.track = Some(t); }
         if let Some(sig) = u.signal {
             ac.rssi = Some(10.0 * ((sig as f64 / 255.0).powi(2)).log10());
+        }
+
+        // Set source type
+        if ac.lat.is_some() && ac.source_type.is_none() {
+            ac.source_type = Some("adsb".to_string());
         }
 
         // CPR position decoding

@@ -14,18 +14,37 @@ async fn aircraft_json(State(store): State<Arc<AircraftStore>>) -> Json<serde_js
     Json(store.aircraft_json(now))
 }
 
+async fn receiver_json() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "refresh": 1000,
+        "history": 0,
+        "readsb": true,
+        "dbServer": true,
+        "haveTraces": false,
+        "globeIndexGrid": 3,
+        "globeIndexSpecialTiles": [],
+        "reapi": false,
+        "binCraft": false,
+        "zstd": false,
+        "version": "skylink-core 0.1.0 (Rust)"
+    }))
+}
+
 async fn stats(State(store): State<Arc<AircraftStore>>) -> Json<serde_json::Value> {
     let total = store.map.len();
     let with_pos = store.map.iter().filter(|e| e.value().lat.is_some()).count();
+    let messages: u64 = store.map.iter().map(|e| e.value().messages).sum();
     Json(serde_json::json!({
         "aircraft_total": total,
         "aircraft_with_pos": with_pos,
+        "messages_total": messages,
     }))
 }
 
 pub async fn serve(store: Arc<AircraftStore>, port: u16) {
     let app = Router::new()
         .route("/data/aircraft.json", get(aircraft_json))
+        .route("/data/receiver.json", get(receiver_json))
         .route("/stats", get(stats))
         .layer(CorsLayer::permissive())
         .with_state(store);
