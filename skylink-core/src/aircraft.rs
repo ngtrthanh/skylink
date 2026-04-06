@@ -347,24 +347,28 @@ fn cpr_global(elat: u32, elon: u32, olat: u32, olon: u32, odd_recent: bool) -> O
     let lon0 = elon as f64 / 131072.0;
     let lon1 = olon as f64 / 131072.0;
 
+    // Latitude
     let j = (59.0 * lat0 - 60.0 * lat1 + 0.5).floor() as i32;
     let mut rlat0 = (360.0 / 60.0) * (cpr_mod(j, 60) as f64 + lat0);
     let mut rlat1 = (360.0 / 59.0) * (cpr_mod(j, 59) as f64 + lat1);
     if rlat0 >= 270.0 { rlat0 -= 360.0; }
     if rlat1 >= 270.0 { rlat1 -= 360.0; }
 
+    // Check NL consistency
     let nl0 = cpr_nl(rlat0);
     let nl1 = cpr_nl(rlat1);
     if nl0 != nl1 { return None; }
 
-    let (rlat, nl) = if odd_recent { (rlat1, nl1) } else { (rlat0, nl0) };
-    let ni = if nl > 0 { nl } else { 1 } as f64;
-    let dlon = 360.0 / ni;
-    let m = ((lon0 * (nl as f64 - 1.0) - lon1 * nl as f64 + 0.5).floor()) as i32;
+    // Longitude — ni depends on which frame is most recent
+    let rlat = if odd_recent { rlat1 } else { rlat0 };
+    let nl = cpr_nl(rlat);
+    let ni = if odd_recent { (nl - 1).max(1) } else { nl.max(1) };
+    let dlon = 360.0 / ni as f64;
+    let m = (lon0 * (nl as f64 - 1.0) - lon1 * nl as f64 + 0.5).floor() as i32;
     let mut rlon = if odd_recent {
-        dlon * (cpr_mod(m, ni as i32) as f64 + lon1)
+        dlon * (cpr_mod(m, ni) as f64 + lon1)
     } else {
-        dlon * (cpr_mod(m, ni as i32) as f64 + lon0)
+        dlon * (cpr_mod(m, ni) as f64 + lon0)
     };
     if rlon >= 180.0 { rlon -= 360.0; }
 
@@ -374,12 +378,66 @@ fn cpr_global(elat: u32, elon: u32, olat: u32, olon: u32, odd_recent: bool) -> O
 fn cpr_mod(a: i32, b: i32) -> i32 { ((a % b) + b) % b }
 
 fn cpr_nl(lat: f64) -> i32 {
-    if lat.abs() >= 87.0 { return 1; }
-    let nz = 15.0_f64;
-    let a = 1.0 - (std::f64::consts::PI / (2.0 * nz)).cos();
-    let b = (std::f64::consts::PI / 180.0 * lat).cos().powi(2);
-    let nl = (2.0 * std::f64::consts::PI / (1.0 - (1.0 - a / b).acos())).floor() as i32;
-    if nl < 1 { 1 } else { nl }
+    let lat = lat.abs();
+    if lat < 10.47047130  { return 59; }
+    if lat < 14.82817437  { return 58; }
+    if lat < 18.18626357  { return 57; }
+    if lat < 21.02939493  { return 56; }
+    if lat < 23.54504487  { return 55; }
+    if lat < 25.82924707  { return 54; }
+    if lat < 27.93898710  { return 53; }
+    if lat < 29.91135686  { return 52; }
+    if lat < 31.77209708  { return 51; }
+    if lat < 33.53993436  { return 50; }
+    if lat < 35.22899598  { return 49; }
+    if lat < 36.85025108  { return 48; }
+    if lat < 38.41241892  { return 47; }
+    if lat < 39.92256684  { return 46; }
+    if lat < 41.38651832  { return 45; }
+    if lat < 42.80914012  { return 44; }
+    if lat < 44.19454951  { return 43; }
+    if lat < 45.54626723  { return 42; }
+    if lat < 46.86733252  { return 41; }
+    if lat < 48.16039128  { return 40; }
+    if lat < 49.42776439  { return 39; }
+    if lat < 50.67150166  { return 38; }
+    if lat < 51.89342469  { return 37; }
+    if lat < 53.09516153  { return 36; }
+    if lat < 54.27817472  { return 35; }
+    if lat < 55.44378444  { return 34; }
+    if lat < 56.59318756  { return 33; }
+    if lat < 57.72747354  { return 32; }
+    if lat < 58.84763776  { return 31; }
+    if lat < 59.95459277  { return 30; }
+    if lat < 61.04917774  { return 29; }
+    if lat < 62.13216659  { return 28; }
+    if lat < 63.20427479  { return 27; }
+    if lat < 64.26616523  { return 26; }
+    if lat < 65.31845310  { return 25; }
+    if lat < 66.36171008  { return 24; }
+    if lat < 67.39646774  { return 23; }
+    if lat < 68.42322022  { return 22; }
+    if lat < 69.44242631  { return 21; }
+    if lat < 70.45451075  { return 20; }
+    if lat < 71.45986473  { return 19; }
+    if lat < 72.45884545  { return 18; }
+    if lat < 73.45177442  { return 17; }
+    if lat < 74.43893416  { return 16; }
+    if lat < 75.42056257  { return 15; }
+    if lat < 76.39684391  { return 14; }
+    if lat < 77.36789461  { return 13; }
+    if lat < 78.33374083  { return 12; }
+    if lat < 79.29428225  { return 11; }
+    if lat < 80.24923213  { return 10; }
+    if lat < 81.19801349  { return 9; }
+    if lat < 82.13956981  { return 8; }
+    if lat < 83.07199445  { return 7; }
+    if lat < 83.99173563  { return 6; }
+    if lat < 84.89166191  { return 5; }
+    if lat < 85.75541621  { return 4; }
+    if lat < 86.53536998  { return 3; }
+    if lat < 87.00000000  { return 2; }
+    1
 }
 
 // --- Reaper ---
@@ -393,5 +451,23 @@ pub async fn reaper(store: Arc<Store>) {
         if removed > 0 {
             info!("reaper: -{} aircraft, {} remaining", removed, store.map.len());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_cpr_nl() {
+        assert_eq!(cpr_nl(0.0), 59);
+        assert_eq!(cpr_nl(52.0), 36);
+        assert_eq!(cpr_nl(87.0), 1);
+    }
+    #[test]
+    fn test_cpr_global() {
+        // From "The 1090MHz Riddle" by Junzi Sun
+        let r = cpr_global(93000, 51372, 74158, 50194, false).unwrap();
+        assert!((r.0 - 52.2572).abs() < 0.001, "lat={}", r.0);
+        assert!((r.1 - 3.9192).abs() < 0.01, "lon={}", r.1);
     }
 }

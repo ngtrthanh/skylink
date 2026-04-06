@@ -276,54 +276,11 @@ fn decode_operational_status(me: &[u8], m: &mut Message) {
 }
 
 /// BDS register decoding for DF20/21 Comm-B replies
-fn decode_bds(mb: &[u8], m: &mut Message) {
-    // BDS 4,0 — Selected vertical intention (MCP altitude, FMS altitude, QNH)
-    if is_bds40(mb) {
-        let mcp = ((mb[0] as u32) << 4) | (mb[1] as u32 >> 4);
-        if mcp > 0 { m.nav_altitude_mcp = Some(mcp * 16); }
-        let fms = ((mb[1] as u32 & 0x0F) << 8) | mb[2] as u32;
-        if fms > 0 { m.nav_altitude_fms = Some(fms * 16); }
-        let qnh_raw = ((mb[4] as u16 & 0x01) << 8) | mb[5] as u16;
-        if qnh_raw > 0 { m.nav_qnh = Some(qnh_raw as f64 * 0.1 + 800.0); }
-    }
-    // BDS 5,0 — Track and turn (roll, track, gs, track_rate, tas)
-    if is_bds50(mb) {
-        let roll_raw = ((mb[0] as i16 & 0x7F) << 3) | (mb[1] as i16 >> 5);
-        if mb[0] & 0x80 != 0 { // roll valid
-            let roll = if roll_raw & 0x200 != 0 { (roll_raw as i32 - 1024) as f64 * 45.0 / 256.0 } else { roll_raw as f64 * 45.0 / 256.0 };
-            m.roll = Some(roll);
-        }
-        let trk_raw = ((mb[1] as u16 & 0x1F) << 6) | (mb[2] as u16 >> 2);
-        if mb[1] & 0x10 != 0 { m.ground_track = Some(trk_raw as f64 * 90.0 / 256.0); }
-        let gs_raw = ((mb[2] as u16 & 0x03) << 8) | mb[3] as u16;
-        if mb[2] & 0x02 != 0 { m.ground_speed = Some(gs_raw as f64 * 2.0); }
-        let tr_raw = ((mb[4] as i16 & 0x7F) << 2) | (mb[5] as i16 >> 6);
-        if mb[4] & 0x80 != 0 {
-            let tr = if tr_raw & 0x100 != 0 { (tr_raw as i32 - 512) as f64 * 8.0 / 256.0 } else { tr_raw as f64 * 8.0 / 256.0 };
-            m.track_rate = Some(tr);
-        }
-        let tas_raw = ((mb[5] as u16 & 0x3F) << 4) | (mb[6] as u16 >> 4);
-        if mb[5] & 0x20 != 0 { m.tas = Some(tas_raw * 2); }
-    }
-    // BDS 6,0 — Heading and speed (mag heading, ias, mach, baro_rate)
-    if is_bds60(mb) {
-        let hdg_raw = ((mb[0] as u16 & 0x7F) << 3) | (mb[1] as u16 >> 5);
-        if mb[0] & 0x80 != 0 { m.mag_heading = Some(hdg_raw as f64 * 90.0 / 256.0); }
-        let ias_raw = ((mb[1] as u16 & 0x1F) << 5) | (mb[2] as u16 >> 3);
-        if mb[1] & 0x10 != 0 { m.ias = Some(ias_raw); }
-        let mach_raw = ((mb[2] as u16 & 0x07) << 7) | (mb[3] as u16 >> 1);
-        if mb[2] & 0x04 != 0 { m.mach = Some(mach_raw as f64 * 0.008); }
-        let br_raw = ((mb[3] as i16 & 0x01) << 9) | (mb[4] as i16) << 1 | (mb[5] as i16 >> 7);
-        if mb[3] & 0x01 != 0 || mb[4] != 0 {
-            let br = if br_raw & 0x200 != 0 { (br_raw as i32 - 1024) * 32 } else { br_raw as i32 * 32 };
-            m.vert_rate = Some(br);
-        }
-    }
+/// DISABLED: BDS identification is unreliable without proper heuristics.
+/// Bad BDS decodes overwrite good ADS-B values with garbage.
+fn decode_bds(_mb: &[u8], _m: &mut Message) {
+    // TODO: implement proper BDS identification (BDS 1,7 / 2,0 cross-check)
 }
-
-fn is_bds40(mb: &[u8]) -> bool { mb[3] & 0xFC == 0 && (mb[0] != 0 || mb[1] != 0) }
-fn is_bds50(mb: &[u8]) -> bool { mb[0] & 0x80 != 0 && mb[1] & 0x10 != 0 }
-fn is_bds60(mb: &[u8]) -> bool { mb[0] & 0x80 != 0 && mb[1] & 0x10 != 0 && mb[2] & 0x04 != 0 }
 
 // --- Altitude decoders ---
 fn decode_ac12(ac12: u16) -> Option<i32> {
