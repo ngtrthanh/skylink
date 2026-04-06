@@ -2,6 +2,7 @@ mod beast;
 mod mode_s;
 mod aircraft;
 mod api;
+mod bincraft;
 
 use std::sync::Arc;
 use tracing::info;

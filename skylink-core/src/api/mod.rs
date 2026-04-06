@@ -6,6 +6,7 @@ use tower_http::cors::CorsLayer;
 use tracing::info;
 
 use crate::aircraft::Store;
+use crate::bincraft;
 
 /// Serve pre-built JSON from cache — zero serialization on request
 async fn aircraft_json(State(store): State<Arc<Store>>) -> Response {
@@ -17,8 +18,26 @@ async fn aircraft_json(State(store): State<Arc<Store>>) -> Response {
     ).into_response()
 }
 
+/// Serve binCraft binary format
+async fn aircraft_bincraft(State(store): State<Arc<Store>>) -> Response {
+    let body = store.bincraft_cache.read().clone();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream"), (header::CACHE_CONTROL, "no-cache")],
+        body,
+    ).into_response()
+}
+
+/// re-api endpoint (tar1090 uses this when reapi=true)
+async fn re_api(State(store): State<Arc<Store>>, axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
+    if params.contains_key("binCraft") {
+        return aircraft_bincraft(State(store)).await;
+    }
+    aircraft_json(State(store)).await
+}
+
 async fn receiver_json() -> Response {
-    let body = r#"{"refresh":1000,"history":0,"readsb":true,"dbServer":true,"haveTraces":false,"globeIndexGrid":3,"globeIndexSpecialTiles":[],"reapi":false,"binCraft":false,"zstd":false,"version":"skylink-core 0.2.0 (Rust)"}"#;
+    let body = r#"{"refresh":1000,"history":0,"readsb":true,"dbServer":true,"haveTraces":false,"globeIndexGrid":3,"globeIndexSpecialTiles":[],"reapi":true,"binCraft":true,"zstd":false,"version":"skylink-core 0.2.0 (Rust)"}"#;
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-cache")],
@@ -37,7 +56,9 @@ async fn stats(State(store): State<Arc<Store>>) -> Response {
 pub async fn serve(store: Arc<Store>, port: u16) {
     let app = Router::new()
         .route("/data/aircraft.json", get(aircraft_json))
+        .route("/data/aircraft.binCraft", get(aircraft_bincraft))
         .route("/data/receiver.json", get(receiver_json))
+        .route("/re-api/", get(re_api))
         .route("/stats", get(stats))
         .layer(CorsLayer::permissive())
         .with_state(store);
