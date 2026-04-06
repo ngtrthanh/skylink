@@ -29,6 +29,22 @@ services:
     networks:
       - skynet
 
+  skylink-test-fe:
+    image: nginx:alpine
+    container_name: skylink-test-fe
+    restart: unless-stopped
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../ml_clf_fe:/usr/share/nginx/html:ro
+    ports:
+      - "31790:80"
+    depends_on:
+      - skylink-core
+    networks:
+      - skynet
+
 networks:
   skynet:
     external: true
