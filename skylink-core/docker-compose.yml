@@ -37,9 +37,11 @@ services:
       - apparmor:unconfined
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ../ml_clf_fe:/usr/share/nginx/html:ro
+      - ../tar1090-fe/html:/var/www/tar1090:ro
+      - ../readsb-protobuf/webapp/src:/var/www/protobuf:ro
     ports:
       - "31790:80"
+      - "31791:81"
     depends_on:
       - skylink-core
     networks:
