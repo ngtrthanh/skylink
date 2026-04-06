@@ -5,6 +5,7 @@ mod api;
 mod bincraft;
 mod output;
 mod feed;
+mod pb;
 
 use std::sync::Arc;
 use tracing::info;

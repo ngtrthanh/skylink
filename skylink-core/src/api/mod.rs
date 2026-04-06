@@ -70,6 +70,15 @@ async fn receiver_json() -> Response {
     ).into_response()
 }
 
+async fn aircraft_pb(State(store): State<Arc<Store>>) -> Response {
+    let body = crate::pb::build_aircraft_pb(&store);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/x-protobuf"), (header::CACHE_CONTROL, "no-cache")],
+        body,
+    ).into_response()
+}
+
 async fn stats(State(store): State<Arc<Store>>) -> Response {
     let total = store.map.len();
     let with_pos = store.map.iter().filter(|e| e.value().lat.is_some()).count();
@@ -82,6 +91,7 @@ pub async fn serve(store: Arc<Store>, port: u16) {
     let app = Router::new()
         .route("/data/aircraft.json", get(aircraft_json))
         .route("/data/aircraft.binCraft", get(aircraft_bincraft))
+        .route("/data/aircraft.pb", get(aircraft_pb))
         .route("/data/receiver.json", get(receiver_json))
         .route("/re-api/", get(re_api))
         .route("/stats", get(stats))
