@@ -12,6 +12,8 @@ use crate::aircraft::Store;
 
 async fn aircraft_json(State(s): State<Arc<Store>>) -> Response { serve_cached(s.json_cache.read().clone(), "application/json") }
 async fn aircraft_bincraft(State(s): State<Arc<Store>>) -> Response { serve_cached(s.bincraft_cache.read().clone(), "application/octet-stream") }
+async fn aircraft_bincraft_zst(State(s): State<Arc<Store>>) -> Response { serve_cached(s.bincraft_zstd_cache.read().clone(), "application/octet-stream") }
+async fn aircraft_json_zst(State(s): State<Arc<Store>>) -> Response { serve_cached(s.json_zstd_cache.read().clone(), "application/json") }
 async fn aircraft_pb(State(s): State<Arc<Store>>) -> Response { serve_cached(s.pb_cache.read().clone(), "application/x-protobuf") }
 async fn aircraft_pb_zstd(State(s): State<Arc<Store>>) -> Response { serve_cached(s.pb_zstd_cache.read().clone(), "application/x-protobuf") }
 async fn aircraft_compact(State(s): State<Arc<Store>>) -> Response { serve_cached(s.compact_zstd_cache.read().clone(), "application/octet-stream") }
@@ -85,7 +87,7 @@ async fn receivers_json(State(store): State<Arc<Store>>) -> Response {
 // --- receiver.json ---
 
 async fn receiver_json() -> Response {
-    json_response(r#"{"refresh":1000,"history":0,"readsb":true,"dbServer":true,"haveTraces":false,"globeIndexGrid":3,"globeIndexSpecialTiles":[],"reapi":true,"binCraft":true,"zstd":false,"version":"skylink-core 0.3.0 (Rust)"}"#.into())
+    json_response(r#"{"refresh":1000,"history":0,"readsb":true,"dbServer":true,"haveTraces":false,"globeIndexGrid":3,"globeIndexSpecialTiles":[],"reapi":true,"binCraft":true,"zstd":true,"version":"skylink-core 0.3.0 (Rust)"}"#.into())
 }
 
 async fn receiver_pb() -> Response {
@@ -332,6 +334,16 @@ async fn trace_recent(State(store): State<Arc<Store>>, Path(hex): Path<String>) 
     (StatusCode::OK, [(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], buf).into_response()
 }
 
+async fn globe_fallback(State(s): State<Arc<Store>>, axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    if path.ends_with(".binCraft.zst") || path.ends_with(".binCraft.zst") {
+        return serve_cached(s.bincraft_zstd_cache.read().clone(), "application/octet-stream");
+    }
+    if path.ends_with(".binCraft") {
+        return serve_cached(s.bincraft_cache.read().clone(), "application/octet-stream");
+    }
+    (StatusCode::NOT_FOUND, "not found").into_response()
+}
+
 // --- stats (simple) ---
 
 async fn stats(State(store): State<Arc<Store>>) -> Response {
@@ -385,6 +397,8 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         // Data endpoints
         .route("/data/aircraft.json", get(aircraft_json))
         .route("/data/aircraft.binCraft", get(aircraft_bincraft))
+        .route("/data/aircraft.binCraft.zst", get(aircraft_bincraft_zst))
+        .route("/data/aircraft.json.zst", get(aircraft_json_zst))
         .route("/data/aircraft.pb", get(aircraft_pb))
         .route("/data/aircraft.pb.zst", get(aircraft_pb_zstd))
         .route("/data/aircraft.compact", get(aircraft_compact))
@@ -404,6 +418,8 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/ws", get(crate::ws::ws_handler))
         // Stats
         .route("/stats", get(stats))
+        // Globe tiles fallback
+        .route("/data/{*path}", get(globe_fallback))
         .layer(CorsLayer::permissive())
         .with_state(store);
 
