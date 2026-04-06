@@ -1,0 +1,7 @@
+/opt/workspace/dev/hpradar.com/skylink/skylink-core/target/debug/deps/scopeguard-23c6b4a32a35cd3d.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scopeguard-1.2.0/src/lib.rs
+
+/opt/workspace/dev/hpradar.com/skylink/skylink-core/target/debug/deps/libscopeguard-23c6b4a32a35cd3d.rlib: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scopeguard-1.2.0/src/lib.rs
+
+/opt/workspace/dev/hpradar.com/skylink/skylink-core/target/debug/deps/libscopeguard-23c6b4a32a35cd3d.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scopeguard-1.2.0/src/lib.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/scopeguard-1.2.0/src/lib.rs:
