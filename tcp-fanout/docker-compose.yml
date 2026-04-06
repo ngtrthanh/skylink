@@ -1,0 +1,11 @@
+services:
+  ais-fanout:
+    build: .
+    container_name: ais-fanout
+    restart: always
+    environment:
+      UPSTREAM_HOST: 192.168.11.10
+      UPSTREAM_PORT: "30004"
+      LISTEN_PORT: "40004"
+    ports:
+      - "40004:40004"

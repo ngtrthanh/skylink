@@ -1,0 +1,150 @@
+services:
+  # ─── readsb fanout: accepts all feeders, outputs clean merged Beast ───
+  readsb-fanout:
+    image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
+    container_name: readsb-fanout
+    hostname: readsb-fanout
+    restart: unless-stopped
+    environment:
+      - TZ=${FEEDER_TZ}
+      - LOGLEVEL=error
+      - READSB_ENABLE_API=false
+      - GRAPHS1090_DISABLE=true
+      - TAR1090_DISABLE=true
+      - READSB_EXTRA_ARGS=--quiet --net --net-only --net-bi-port=30004 --net-bo-port=30005 --net-beast-reduce-out-port=30006 --net-ingest --net-receiver-id --net-buffer 4 --net-heartbeat 30
+    tmpfs:
+      - /run:exec,size=64M
+      - /tmp:size=64M
+      - /var/log:size=16M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 30004:30004/tcp
+    networks:
+      - skynet
+    security_opt:
+      - apparmor:unconfined
+
+  # ─── PRODUCTION ─────────────────────────────────────────────
+  skylink:
+    image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
+    tty: true
+    container_name: skylink
+    hostname: skylink
+    restart: unless-stopped
+    depends_on:
+      - readsb-fanout
+    environment:
+      - LOGLEVEL=error
+      - TZ=${FEEDER_TZ}
+      - READSB_ENABLE_API=true
+      - GRAPHS1090_DISABLE=false
+      - MAX_GLOBE_HISTORY=2
+      - READSB_EXTRA_ARGS=
+        --quiet
+        --write-json-globe-index
+        --heatmap=0
+        --write-globe-history /var/globe_history --json-trace-interval 60
+        --tar1090-use-api
+        --net-api-port unix:/run/readsb/api.sock
+        --net-receiver-id
+        --net-buffer 4
+        --net-connector-delay 5
+      - READSB_NET_CONNECTOR=readsb-fanout,30005,beast_in;
+      - TAR1090_BINGMAPSAPIKEY=Alq7RH7qHgMmDk_L707lgKj7MNNQCwLiUSpauLs96M45remQCSBVA4Un5MBJA-Gc
+      - TAR1090_PAGETITLE=Skylink
+      - TAR1090_PLANECOUNTINTITLE=true
+      - TAR1090_MESSAGERATEINTITLE=true
+      - TAR1090_MAPTYPE_TAR1090=Stadia_Alidade_Smooth
+      - TAR1090_MAPDIM=false
+      - GZIP_LVL=1
+      - TAR1090_FLIGHTAWARELINKS=true
+      - TAR1090_ENABLE_AC_DB=true
+      - UPDATE_TAR1090=true
+      - TAR1090_USEROUTEAPI=false
+      - GRAPHS1090_DARKMODE=false
+    volumes:
+      - ./data/graphs1090:/var/lib/collectd
+      - ./local/skylink-lc2:/var/tar1090_git_source
+      - ./data/globe_history:/var/globe_history
+      - ./local/skylink-lc2/nginx-perf.conf:/etc/nginx/conf.d/perf.conf:ro
+      - /proc/diskstats:/proc/diskstats:ro
+    tmpfs:
+      - /run:exec,size=3G
+      - /tmp:size=2G
+      - /var/log:size=64M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 30104:30104/tcp
+      - 33003:30003
+      - 32006:30006
+      - 33005:30005/tcp
+      - 31787:80
+    networks:
+      - skynet
+    security_opt:
+      - apparmor:unconfined
+
+  # ─── TEST ───────────────────────────────────────────────────
+  skylink-test:
+    image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
+    tty: true
+    container_name: skylink-test
+    hostname: skylink-test
+    restart: unless-stopped
+    profiles:
+      - test
+    depends_on:
+      - readsb-fanout
+    environment:
+      - LOGLEVEL=error
+      - TZ=${FEEDER_TZ}
+      - READSB_ENABLE_API=true
+      - GRAPHS1090_DISABLE=true
+      - MAX_GLOBE_HISTORY=0
+      - READSB_EXTRA_ARGS=
+        --quiet
+        --write-json-globe-index
+        --heatmap=0
+        --tar1090-use-api
+        --net-api-port unix:/run/readsb/api.sock
+        --net-receiver-id
+        --net-buffer 4
+        --net-connector-delay 5
+      - READSB_NET_CONNECTOR=readsb-fanout,30005,beast_in;
+      - TAR1090_PAGETITLE=Skylink TEST
+      - TAR1090_PLANECOUNTINTITLE=true
+      - TAR1090_MESSAGERATEINTITLE=true
+      - TAR1090_MAPTYPE_TAR1090=Stadia_Alidade_Smooth
+      - TAR1090_MAPDIM=false
+      - GZIP_LVL=1
+      - TAR1090_ENABLE_AC_DB=true
+      - UPDATE_TAR1090=true
+      - TAR1090_USEROUTEAPI=false
+    volumes:
+      - ./local/skylink-test:/var/tar1090_git_source
+      - ./local/skylink-lc2/nginx-perf.conf:/etc/nginx/conf.d/perf.conf:ro
+    tmpfs:
+      - /run:exec,size=3G
+      - /tmp:size=1G
+      - /var/log:size=32M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 31788:80
+    networks:
+      - skynet
+    security_opt:
+      - apparmor:unconfined
+
+networks:
+  skynet:
+    name: skynet
+    external: true

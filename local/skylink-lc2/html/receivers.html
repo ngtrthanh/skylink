@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skylink Receivers</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0e1a;color:#c8d6e5}
+.hdr{padding:10px 20px;background:#111827;border-bottom:1px solid #1e3a5f;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.hdr h1{font-size:1.1rem;color:#00d4ff}
+.stats{display:flex;gap:16px;font-size:.8rem}
+.stat{text-align:center}
+.stat b{display:block;font-size:1.2rem;color:#00d4ff}
+#map{height:48vh;width:100%}
+.tbl-wrap{padding:8px;overflow:auto;max-height:44vh}
+table{width:100%;border-collapse:collapse;font-size:.75rem}
+th{position:sticky;top:0;background:#111827;color:#00d4ff;padding:5px 6px;text-align:left;cursor:pointer;user-select:none;border-bottom:1px solid #1e3a5f;white-space:nowrap}
+th:hover{color:#fff}
+td{padding:4px 6px;border-bottom:1px solid #151d2e}
+tr:hover{background:#111827}
+.r{text-align:right}
+.bad{color:#ff4757}
+.good{color:#2ed573}
+.warn{color:#ffa502}
+.bar{height:4px;background:#1e3a5f;border-radius:2px;min-width:50px;margin-top:2px}
+.bar-fill{height:100%;border-radius:2px}
+.region{display:inline-block;padding:1px 5px;border-radius:3px;font-size:.68rem;font-weight:600}
+.region-na{background:#1e3a5f;color:#54a0ff}
+.region-eu{background:#1a3a2a;color:#2ed573}
+.region-ap{background:#3a2a1a;color:#ffa502}
+.region-ot{background:#2a1a2a;color:#c56cf0}
+input{background:#111827;border:1px solid #1e3a5f;color:#c8d6e5;padding:4px 10px;border-radius:4px;font-size:.8rem;width:180px}
+.flag{font-size:.9rem;margin-right:2px}
+.pulse{animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.leaflet-popup-content{font-size:.8rem;line-height:1.4}
+.leaflet-popup-content b{color:#00d4ff}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h1>📡 Skylink Receivers</h1>
+  <div class="stats">
+    <div class="stat"><b id="s-total">-</b>Total</div>
+    <div class="stat"><b id="s-na">-</b>N.America</div>
+    <div class="stat"><b id="s-eu">-</b>Europe</div>
+    <div class="stat"><b id="s-ap">-</b>Asia-Pac</div>
+    <div class="stat"><b id="s-ot">-</b>Other</div>
+    <div class="stat"><b id="s-rate">-</b>Pos/sec</div>
+  </div>
+  <input id="search" placeholder="Search UUID, country...">
+</div>
+<div id="map"></div>
+<div class="tbl-wrap">
+<table>
+<thead><tr>
+  <th data-col="0">#</th>
+  <th data-col="1">Receiver</th>
+  <th data-col="2">Country</th>
+  <th data-col="3">Region</th>
+  <th data-col="4" class="r">Pos/sec</th>
+  <th data-col="5" class="r">T/O hr</th>
+  <th data-col="6" class="r">Lat</th>
+  <th data-col="7" class="r">Lon</th>
+  <th data-col="8">Coverage</th>
+  <th data-col="9">Status</th>
+</tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+</div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
+<script>
+// Reverse geocode lat/lon to country code using a simple bounding box lookup
+// Covers major countries, falls back to region
+const CC = [
+  // code, flag, name, latMin, latMax, lonMin, lonMax
+  ['US','🇺🇸','United States',24,50,-125,-66],
+  ['CA','🇨🇦','Canada',42,72,-141,-52],
+  ['MX','🇲🇽','Mexico',14,33,-118,-86],
+  ['GB','🇬🇧','United Kingdom',49,61,-8,2],
+  ['IE','🇮🇪','Ireland',51,56,-11,-5],
+  ['DE','🇩🇪','Germany',47,55,6,15],
+  ['FR','🇫🇷','France',42,51,-5,9],
+  ['NL','🇳🇱','Netherlands',50,54,3,8],
+  ['BE','🇧🇪','Belgium',49,52,2,7],
+  ['CH','🇨🇭','Switzerland',45,48,6,11],
+  ['AT','🇦🇹','Austria',46,49,9,17],
+  ['IT','🇮🇹','Italy',36,47,6,19],
+  ['ES','🇪🇸','Spain',36,44,-10,4],
+  ['PT','🇵🇹','Portugal',37,42,-10,-6],
+  ['PL','🇵🇱','Poland',49,55,14,24],
+  ['CZ','🇨🇿','Czechia',48,51,12,19],
+  ['SE','🇸🇪','Sweden',55,69,11,24],
+  ['NO','🇳🇴','Norway',58,71,4,31],
+  ['DK','🇩🇰','Denmark',54,58,8,15],
+  ['FI','🇫🇮','Finland',60,70,20,32],
+  ['RO','🇷🇴','Romania',43,48,20,30],
+  ['HU','🇭🇺','Hungary',45,49,16,23],
+  ['GR','🇬🇷','Greece',35,42,19,30],
+  ['TR','🇹🇷','Turkey',36,42,26,45],
+  ['RU','🇷🇺','Russia',41,82,27,180],
+  ['UA','🇺🇦','Ukraine',44,53,22,40],
+  ['JP','🇯🇵','Japan',30,46,129,146],
+  ['KR','🇰🇷','South Korea',33,39,125,130],
+  ['CN','🇨🇳','China',18,54,73,135],
+  ['TW','🇹🇼','Taiwan',21,26,119,122],
+  ['IN','🇮🇳','India',6,36,68,98],
+  ['AU','🇦🇺','Australia',-44,-10,113,154],
+  ['NZ','🇳🇿','New Zealand',-47,-34,166,179],
+  ['SG','🇸🇬','Singapore',1,2,103,104],
+  ['MY','🇲🇾','Malaysia',0,8,99,120],
+  ['TH','🇹🇭','Thailand',5,21,97,106],
+  ['VN','🇻🇳','Vietnam',8,24,102,110],
+  ['PH','🇵🇭','Philippines',5,21,117,127],
+  ['ID','🇮🇩','Indonesia',-11,6,95,141],
+  ['BR','🇧🇷','Brazil',-34,6,-74,-35],
+  ['AR','🇦🇷','Argentina',-55,-21,-74,-53],
+  ['CL','🇨🇱','Chile',-56,-17,-76,-66],
+  ['CO','🇨🇴','Colombia',-5,14,-80,-66],
+  ['ZA','🇿🇦','South Africa',-35,-22,16,33],
+  ['IL','🇮🇱','Israel',29,34,34,36],
+  ['AE','🇦🇪','UAE',22,26,51,56],
+  ['SA','🇸🇦','Saudi Arabia',16,32,34,56],
+  ['EG','🇪🇬','Egypt',22,32,24,37],
+];
+
+function geoLookup(lat,lon){
+  for(const c of CC){
+    if(lat>=c[3]&&lat<=c[4]&&lon>=c[5]&&lon<=c[6]) return {code:c[0],flag:c[1],name:c[2]};
+  }
+  return {code:'??',flag:'🌍',name:'Unknown'};
+}
+
+function regionOf(lat,lon){
+  if(lon>-130&&lon<-60&&lat>9&&lat<72) return 'na';
+  if(lon>-10&&lon<45&&lat>35&&lat<72) return 'eu';
+  if(lon>60&&lon<180&&lat>-50&&lat<70) return 'ap';
+  return 'ot';
+}
+const regionName={na:'N.America',eu:'Europe',ap:'Asia-Pac',ot:'Other'};
+const regionClass={na:'region-na',eu:'region-eu',ap:'region-ap',ot:'region-ot'};
+
+function rateColor(r){return r>5?'#2ed573':r>1?'#ffa502':'#ff4757'}
+
+const map = L.map('map',{zoomControl:false}).setView([30,0],2);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'©OSM ©CARTO',maxZoom:18
+}).addTo(map);
+L.control.zoom({position:'topright'}).addTo(map);
+
+let markerLayer = L.layerGroup().addTo(map);
+let coverageLayer = L.layerGroup().addTo(map);
+let sortCol=4, sortAsc=false, allData=[];
+
+function refresh(){
+  fetch('/data/receivers.json').then(r=>r.json()).then(d=>{
+    const recs=d.receivers||[];
+    allData=recs.map(r=>{
+      const geo=geoLookup(r[8],r[9]);
+      return {
+        uuid:r[0],rate:r[1],timeouts:r[2],
+        latMin:r[3],latMax:r[4],lonMin:r[5],lonMax:r[6],
+        bad:r[7],lat:r[8],lon:r[9],
+        reg:regionOf(r[8],r[9]),
+        cc:geo.code,flag:geo.flag,country:geo.name
+      };
+    });
+
+    const counts={na:0,eu:0,ap:0,ot:0};
+    let totalRate=0;
+    allData.forEach(r=>{counts[r.reg]++;totalRate+=r.rate});
+    document.getElementById('s-total').textContent=allData.length;
+    document.getElementById('s-na').textContent=counts.na;
+    document.getElementById('s-eu').textContent=counts.eu;
+    document.getElementById('s-ap').textContent=counts.ap;
+    document.getElementById('s-ot').textContent=counts.ot;
+    document.getElementById('s-rate').textContent=totalRate.toFixed(0);
+
+    renderTable();
+    renderMap();
+  });
+}
+
+function renderTable(){
+  const q=document.getElementById('search').value.toLowerCase();
+  let data=allData;
+  if(q) data=data.filter(r=>r.uuid.includes(q)||r.country.toLowerCase().includes(q)||r.cc.toLowerCase().includes(q)||regionName[r.reg].toLowerCase().includes(q));
+
+  const keys=['','uuid','country','reg','rate','timeouts','lat','lon','','bad'];
+  data.sort((a,b)=>{
+    const k=keys[sortCol];
+    if(!k)return 0;
+    const va=a[k],vb=b[k];
+    if(typeof va==='number')return sortAsc?va-vb:vb-va;
+    return sortAsc?String(va).localeCompare(vb):String(vb).localeCompare(va);
+  });
+
+  const maxRate=Math.max(1,...data.map(r=>r.rate));
+  document.getElementById('tbody').innerHTML=data.map((r,i)=>{
+    const covLat=(r.latMax-r.latMin).toFixed(1);
+    const covLon=(r.lonMax-r.lonMin).toFixed(1);
+    const barW=Math.min(100,r.rate/maxRate*100);
+    const pulseClass=r.rate>2?'pulse':'';
+    const status=r.bad?'<span class="bad">⚠ Bad</span>'
+      :r.rate>1?`<span class="good ${pulseClass}">● Active</span>`
+      :'<span class="warn">○ Low</span>';
+    return `<tr>
+      <td>${i+1}</td>
+      <td style="font-family:monospace;font-size:.7rem">${r.uuid}</td>
+      <td><span class="flag">${r.flag}</span>${r.country}</td>
+      <td><span class="region ${regionClass[r.reg]}">${regionName[r.reg]}</span></td>
+      <td class="r">${r.rate.toFixed(1)}</td>
+      <td class="r ${r.timeouts>0?'warn':''}">${r.timeouts.toFixed(1)}</td>
+      <td class="r">${r.lat.toFixed(2)}</td>
+      <td class="r">${r.lon.toFixed(2)}</td>
+      <td>${covLat}°×${covLon}°<div class="bar"><div class="bar-fill" style="width:${barW}%;background:${rateColor(r.rate)}"></div></div></td>
+      <td>${status}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMap(){
+  markerLayer.clearLayers();
+  coverageLayer.clearLayers();
+  const zoom=map.getZoom();
+
+  allData.forEach(r=>{
+    const c=rateColor(r.rate);
+    // Pulsing radius based on data rate
+    const baseR=Math.max(2,Math.min(6,r.rate/2));
+
+    const m=L.circleMarker([r.lat,r.lon],{
+      radius:baseR,color:c,fillColor:c,fillOpacity:.7,weight:0
+    });
+    m.bindPopup(`<b>${r.flag} ${r.country}</b> <small>(${r.cc})</small><br>
+      <b>UUID:</b> ${r.uuid}<br>
+      <b>Rate:</b> ${r.rate.toFixed(1)} pos/s<br>
+      <b>Timeouts:</b> ${r.timeouts.toFixed(1)}/hr<br>
+      <b>Location:</b> ${r.lat.toFixed(3)}, ${r.lon.toFixed(3)}<br>
+      <b>Coverage:</b> ${(r.latMax-r.latMin).toFixed(1)}° × ${(r.lonMax-r.lonMin).toFixed(1)}°<br>
+      <b>Status:</b> ${r.bad?'⚠ Bad Extent':r.rate>1?'Active':'Low rate'}`);
+    markerLayer.addLayer(m);
+
+    // Coverage rectangle at higher zoom
+    if(zoom>=4 && r.latMax-r.latMin>0.1){
+      const rect=L.rectangle([[r.latMin,r.lonMin],[r.latMax,r.lonMax]],{
+        color:c,weight:1,fillColor:c,fillOpacity:.08,dashArray:'4 4'
+      });
+      coverageLayer.addLayer(rect);
+    }
+  });
+}
+
+map.on('zoomend moveend',renderMap);
+
+document.querySelectorAll('th[data-col]').forEach(th=>{
+  th.onclick=()=>{
+    const col=+th.dataset.col;
+    if(sortCol===col)sortAsc=!sortAsc;else{sortCol=col;sortAsc=false}
+    renderTable();
+  };
+});
+document.getElementById('search').oninput=renderTable;
+
+refresh();
+setInterval(refresh,30000);
+</script>
+</body>
+</html>
