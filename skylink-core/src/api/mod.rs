@@ -231,6 +231,95 @@ fn encode_filtered(aircraft: &[(u32, crate::aircraft::Aircraft)], format: &str) 
     }
 }
 
+// --- Traces: flight path history ---
+
+async fn trace_full(State(store): State<Arc<Store>>, Path(hex): Path<String>) -> Response {
+    let icao = match u32::from_str_radix(&hex, 16) {
+        Ok(v) => v, Err(_) => return (StatusCode::NOT_FOUND, "invalid hex").into_response(),
+    };
+    let entry = match store.map.get(&icao) {
+        Some(e) => e, None => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    };
+    let ac = entry.value();
+    let now = now_secs();
+
+    // readsb trace format: {"icao":"hex","timestamp":first_ts,"trace":[[ts,lat,lon,alt_baro,gs,track,flags,...],...]}
+    let mut buf = Vec::with_capacity(ac.trace.len() * 80 + 200);
+    buf.extend_from_slice(b"{\"icao\":\"");
+    buf.extend_from_slice(ac.hex.as_bytes());
+    buf.extend_from_slice(b"\",\"noRegData\":true");
+    if let Some(ref f) = ac.flight {
+        buf.extend_from_slice(b",\"callsign\":\"");
+        buf.extend_from_slice(f.as_bytes());
+        buf.push(b'"');
+    }
+    if !ac.trace.is_empty() {
+        buf.extend_from_slice(b",\"timestamp\":");
+        buf.extend_from_slice(format!("{:.3}", ac.trace[0].ts).as_bytes());
+    }
+    buf.extend_from_slice(b",\"trace\":[");
+    for (i, p) in ac.trace.iter().enumerate() {
+        if i > 0 { buf.push(b','); }
+        // [relative_ts, lat, lon, alt_baro, gs, track, flags, vert_rate, ias, alt_geom]
+        let rel = if !ac.trace.is_empty() { p.ts - ac.trace[0].ts } else { 0.0 };
+        buf.push(b'[');
+        buf.extend_from_slice(format!("{:.1},{:.6},{:.6},", rel, p.lat, p.lon).as_bytes());
+        match p.alt_baro { Some(a) => buf.extend_from_slice(a.to_string().as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.push(b',');
+        match p.gs { Some(v) => buf.extend_from_slice(format!("{:.1}", v).as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.push(b',');
+        match p.track { Some(v) => buf.extend_from_slice(format!("{:.1}", v).as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.extend_from_slice(b",0,"); // flags
+        match p.baro_rate { Some(v) => buf.extend_from_slice(v.to_string().as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.push(b',');
+        match p.ias { Some(v) => buf.extend_from_slice(v.to_string().as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.push(b',');
+        match p.alt_geom { Some(v) => buf.extend_from_slice(v.to_string().as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.push(b']');
+    }
+    buf.extend_from_slice(b"]}");
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], buf).into_response()
+}
+
+// Recent trace: last 2 minutes
+async fn trace_recent(State(store): State<Arc<Store>>, Path(hex): Path<String>) -> Response {
+    let icao = match u32::from_str_radix(&hex, 16) {
+        Ok(v) => v, Err(_) => return (StatusCode::NOT_FOUND, "invalid hex").into_response(),
+    };
+    let entry = match store.map.get(&icao) {
+        Some(e) => e, None => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    };
+    let ac = entry.value();
+    let now = now_secs();
+    let cutoff = now - 120.0;
+
+    let recent: Vec<&crate::aircraft::TracePoint> = ac.trace.iter().filter(|p| p.ts >= cutoff).collect();
+
+    let mut buf = Vec::with_capacity(recent.len() * 80 + 200);
+    buf.extend_from_slice(b"{\"icao\":\"");
+    buf.extend_from_slice(ac.hex.as_bytes());
+    buf.extend_from_slice(b"\"");
+    if !recent.is_empty() {
+        buf.extend_from_slice(b",\"timestamp\":");
+        buf.extend_from_slice(format!("{:.3}", recent[0].ts).as_bytes());
+    }
+    buf.extend_from_slice(b",\"trace\":[");
+    for (i, p) in recent.iter().enumerate() {
+        if i > 0 { buf.push(b','); }
+        let rel = if !recent.is_empty() { p.ts - recent[0].ts } else { 0.0 };
+        buf.push(b'[');
+        buf.extend_from_slice(format!("{:.1},{:.6},{:.6},", rel, p.lat, p.lon).as_bytes());
+        match p.alt_baro { Some(a) => buf.extend_from_slice(a.to_string().as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.push(b',');
+        match p.gs { Some(v) => buf.extend_from_slice(format!("{:.1}", v).as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.push(b',');
+        match p.track { Some(v) => buf.extend_from_slice(format!("{:.1}", v).as_bytes()), None => buf.extend_from_slice(b"null") };
+        buf.extend_from_slice(b",0,null,null,null]");
+    }
+    buf.extend_from_slice(b"]}");
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], buf).into_response()
+}
+
 // --- stats (simple) ---
 
 async fn stats(State(store): State<Arc<Store>>) -> Response {
@@ -293,6 +382,9 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/data/status.prom", get(status_prom))
         .route("/data/clients.json", get(clients_json))
         .route("/data/receivers.json", get(receivers_json))
+        // Traces
+        .route("/data/traces/{hex}/trace_full.json", get(trace_full))
+        .route("/data/traces/{hex}/trace_recent.json", get(trace_recent))
         // Query API
         .route("/re-api/", get(re_api))
         // WebSocket

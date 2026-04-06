@@ -59,6 +59,20 @@ pub struct Aircraft {
     #[serde(skip)] pub cpr_even: Option<(u32, u32, f64)>,
     #[serde(skip)] pub cpr_odd: Option<(u32, u32, f64)>,
     #[serde(skip)] pub last_update: f64,
+    #[serde(skip)] pub trace: Vec<TracePoint>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TracePoint {
+    pub ts: f64,
+    pub lat: f64,
+    pub lon: f64,
+    pub alt_baro: Option<i32>,
+    pub alt_geom: Option<i32>,
+    pub gs: Option<f64>,
+    pub track: Option<f64>,
+    pub baro_rate: Option<i32>,
+    pub ias: Option<u16>,
 }
 
 pub struct Store {
@@ -127,6 +141,7 @@ impl Store {
             gva: None, sda: None, nic_baro: None, adsb_version: None,
             addr_type: 0,
             cpr_even: None, cpr_odd: None, last_update: t,
+            trace: Vec::new(),
         });
         let ac = entry.value_mut();
 
@@ -185,6 +200,18 @@ impl Store {
                             ac.lat = Some((lat * 1e6).round() / 1e6);
                             ac.lon = Some((lon * 1e6).round() / 1e6);
                             ac.seen_pos = Some(0.0);
+
+                            // Record trace point (max 1 per 4s, cap at 1000 points ~1hr)
+                            let dominated = ac.trace.last().map(|p| t - p.ts < 4.0).unwrap_or(false);
+                            if !dominated {
+                                if ac.trace.len() >= 1000 { ac.trace.remove(0); }
+                                ac.trace.push(TracePoint {
+                                    ts: t, lat: ac.lat.unwrap(), lon: ac.lon.unwrap(),
+                                    alt_baro: ac.alt_baro, alt_geom: ac.alt_geom,
+                                    gs: ac.gs, track: ac.track,
+                                    baro_rate: ac.baro_rate, ias: ac.ias,
+                                });
+                            }
                             if ac.source_type.is_none() {
                                 ac.source_type = Some(if msg.df == 18 { "adsb_other".into() } else { "adsb".into() });
                             }
