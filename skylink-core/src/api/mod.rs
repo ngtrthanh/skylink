@@ -28,10 +28,35 @@ async fn aircraft_bincraft(State(store): State<Arc<Store>>) -> Response {
     ).into_response()
 }
 
-/// re-api endpoint (tar1090 uses this when reapi=true)
+/// re-api endpoint (tar1090 / ml_clf_fe use this)
+/// Supports: ?binCraft, ?binCraft&box=south,north,west,east, ?binCraft&zstd
 async fn re_api(State(store): State<Arc<Store>>, axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
     if params.contains_key("binCraft") {
-        return aircraft_bincraft(State(store)).await;
+        let use_zstd = params.contains_key("zstd");
+        let raw = if let Some(box_param) = params.get("box") {
+            let parts: Vec<f64> = box_param.split(',').filter_map(|s| s.parse().ok()).collect();
+            if parts.len() == 4 {
+                crate::bincraft::build_filtered(&store, parts[0], parts[1], parts[2], parts[3])
+            } else {
+                store.bincraft_cache.read().to_vec()
+            }
+        } else {
+            store.bincraft_cache.read().to_vec()
+        };
+
+        let body = if use_zstd {
+            zstd::encode_all(raw.as_slice(), 1).unwrap_or(raw)
+        } else {
+            raw
+        };
+
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/octet-stream"),
+             (header::CACHE_CONTROL, "no-cache"),
+             (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+            body,
+        ).into_response();
     }
     aircraft_json(State(store)).await
 }
