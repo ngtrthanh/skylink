@@ -1,4 +1,4 @@
-services:     
+services:
   skylink:
     image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
     tty: true
@@ -10,7 +10,7 @@ services:
       - TZ=${FEEDER_TZ}
       - READSB_ENABLE_API=true
       - GRAPHS1090_DISABLE=false
-      - MAX_GLOBE_HISTORY=2	
+      - MAX_GLOBE_HISTORY=2
       - READSB_EXTRA_ARGS=
         --quiet
         --write-json-globe-index
@@ -24,8 +24,6 @@ services:
         --net-buffer 4
         --net-connector-delay 5
       - READSB_NET_CONNECTOR=192.168.11.10,30004,beast_in;
-      #192.168.11.10,30005,beast_in;
-      # TAR1090 (Map Web Page) parameters:
       - TAR1090_BINGMAPSAPIKEY=Alq7RH7qHgMmDk_L707lgKj7MNNQCwLiUSpauLs96M45remQCSBVA4Un5MBJA-Gc
       - TAR1090_PAGETITLE=Skylink
       - TAR1090_PLANECOUNTINTITLE=true
@@ -62,7 +60,8 @@ services:
     networks:
       - skynet
     security_opt:
-      - apparmor:unconfined      
+      - apparmor:unconfined
+
 networks:
   skynet:
     name: skynet
