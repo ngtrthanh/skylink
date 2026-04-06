@@ -20,27 +20,46 @@ fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
     }
 
     if let Some(vr) = ac.baro_rate { write_i16(&mut rec, 16, (vr as f64 / 8.0) as i16); }
+    if let Some(vr) = ac.geom_rate { write_i16(&mut rec, 18, (vr as f64 / 8.0) as i16); }
     if let Some(alt) = ac.alt_baro { write_i16(&mut rec, 20, (alt as f64 / 25.0) as i16); }
     if let Some(alt) = ac.alt_geom { write_i16(&mut rec, 22, (alt as f64 / 25.0) as i16); }
+    if let Some(v) = ac.nav_altitude_mcp { write_u16(&mut rec, 24, (v / 4) as u16); }
+    if let Some(v) = ac.nav_altitude_fms { write_u16(&mut rec, 26, (v / 4) as u16); }
+    if let Some(v) = ac.nav_qnh { write_i16(&mut rec, 28, (v * 10.0) as i16); }
+    if let Some(v) = ac.nav_heading { write_i16(&mut rec, 30, (v * 90.0) as i16); }
 
     if let Some(ref sq) = ac.squawk {
         if let Ok(v) = u16::from_str_radix(sq, 16) { write_u16(&mut rec, 32, v); }
     }
 
     if let Some(gs) = ac.gs { write_i16(&mut rec, 34, (gs * 10.0) as i16); }
+    if let Some(v) = ac.mach { write_i16(&mut rec, 36, (v * 1000.0) as i16); }
+    if let Some(v) = ac.roll { write_i16(&mut rec, 38, (v * 100.0) as i16); }
     if let Some(trk) = ac.track { write_i16(&mut rec, 40, (trk * 90.0) as i16); }
+    if let Some(v) = ac.track_rate { write_i16(&mut rec, 42, (v * 100.0) as i16); }
+    if let Some(v) = ac.mag_heading { write_i16(&mut rec, 44, (v * 90.0) as i16); }
+    if let Some(v) = ac.true_heading { write_i16(&mut rec, 46, (v * 90.0) as i16); }
+    if let Some(v) = ac.tas { write_u16(&mut rec, 56, v); }
+    if let Some(v) = ac.ias { write_u16(&mut rec, 58, v); }
 
     write_u16(&mut rec, 62, ac.messages.min(65535) as u16);
 
     if let Some(ref cat) = ac.category {
         if let Ok(v) = u8::from_str_radix(cat, 16) { rec[64] = v; }
     }
-
-    // u8[67] high nibble = addrtype
-    if ac.source_type.is_some() { rec[67] = (rec[67] & 0x0F) | 0x00; } // adsb_icao = 0
+    if let Some(v) = ac.nic { rec[65] = v; }
+    if let Some(v) = ac.emergency { rec[67] = (rec[67] & 0xF0) | (v & 0x0F); }
+    rec[67] = (rec[67] & 0x0F) | ((ac.addr_type & 0x0F) << 4);
+    if let Some(v) = ac.adsb_version { rec[69] = (rec[69] & 0x0F) | ((v & 0x0F) << 4); }
+    if let Some(v) = ac.nac_p { rec[71] = (rec[71] & 0xF0) | (v & 0x0F); }
+    if let Some(v) = ac.nac_v { rec[71] = (rec[71] & 0x0F) | ((v & 0x0F) << 4); }
+    if let Some(v) = ac.sil { rec[72] = (rec[72] & 0xFC) | (v & 0x03); }
+    if let Some(v) = ac.gva { rec[72] = (rec[72] & 0xF3) | ((v & 0x03) << 2); }
+    if let Some(v) = ac.sda { rec[72] = (rec[72] & 0xCF) | ((v & 0x03) << 4); }
 
     // Validity bits
     let mut v73: u8 = 0;
+    if let Some(v) = ac.nic_baro { v73 |= v & 1; }
     if ac.flight.is_some() { v73 |= 8; }
     if ac.alt_baro.is_some() { v73 |= 16; }
     if ac.alt_geom.is_some() { v73 |= 32; }
@@ -49,16 +68,38 @@ fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
     rec[73] = v73;
 
     let mut v74: u8 = 0;
+    if ac.ias.is_some() { v74 |= 1; }
+    if ac.tas.is_some() { v74 |= 2; }
+    if ac.mach.is_some() { v74 |= 4; }
     if ac.track.is_some() { v74 |= 8; }
+    if ac.track_rate.is_some() { v74 |= 16; }
+    if ac.roll.is_some() { v74 |= 32; }
+    if ac.mag_heading.is_some() { v74 |= 64; }
+    if ac.true_heading.is_some() { v74 |= 128; }
     rec[74] = v74;
 
     let mut v75: u8 = 0;
     if ac.baro_rate.is_some() { v75 |= 1; }
+    if ac.geom_rate.is_some() { v75 |= 2; }
+    if ac.nac_p.is_some() { v75 |= 32; }
+    if ac.nac_v.is_some() { v75 |= 64; }
+    if ac.sil.is_some() { v75 |= 128; }
     rec[75] = v75;
 
     let mut v76: u8 = 0;
+    if ac.gva.is_some() { v76 |= 1; }
+    if ac.sda.is_some() { v76 |= 2; }
     if ac.squawk.is_some() { v76 |= 4; }
+    if ac.emergency.is_some() { v76 |= 8; }
+    if ac.nav_qnh.is_some() { v76 |= 32; }
+    if ac.nav_altitude_mcp.is_some() { v76 |= 64; }
+    if ac.nav_altitude_fms.is_some() { v76 |= 128; }
     rec[76] = v76;
+
+    let mut v77: u8 = 0;
+    if ac.nav_heading.is_some() { v77 |= 2; }
+    if ac.nav_modes.is_some() { v77 |= 4; }
+    rec[77] = v77;
 
     if let Some(ref cs) = ac.flight {
         for (i, b) in cs.as_bytes().iter().take(8).enumerate() { rec[78 + i] = *b; }

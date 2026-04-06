@@ -16,37 +16,47 @@ fn now() -> f64 {
 #[derive(Debug, Clone, Serialize)]
 pub struct Aircraft {
     pub hex: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flight: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alt_baro: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alt_geom: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gs: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub track: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub baro_rate: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub squawk: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub category: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lat: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lon: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seen_pos: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub flight: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub alt_baro: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub alt_geom: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub gs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub track: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub baro_rate: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub geom_rate: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub squawk: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub lat: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub lon: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub seen_pos: Option<f64>,
     pub seen: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rssi: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub rssi: Option<f64>,
     pub messages: u64,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")] pub source_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub ias: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub tas: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub mach: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub mag_heading: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub true_heading: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub roll: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub track_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nav_altitude_mcp: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nav_altitude_fms: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nav_qnh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nav_heading: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub emergency: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nic: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nac_p: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nac_v: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub sil: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub sil_type: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub gva: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub sda: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nic_baro: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub adsb_version: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub nav_modes: Option<u8>,
+    #[serde(skip)] pub addr_type: u8,
 
-    // Internal state — not serialized
-    #[serde(skip)] pub cpr_even: Option<(u32, u32, f64)>, // (lat, lon, time)
+    #[serde(skip)] pub cpr_even: Option<(u32, u32, f64)>,
     #[serde(skip)] pub cpr_odd: Option<(u32, u32, f64)>,
     #[serde(skip)] pub last_update: f64,
 }
@@ -81,8 +91,16 @@ impl Store {
         let mut entry = self.map.entry(msg.icao).or_insert_with(|| Aircraft {
             hex: format!("{:06x}", msg.icao),
             flight: None, alt_baro: None, alt_geom: None, gs: None, track: None,
-            baro_rate: None, squawk: None, category: None, lat: None, lon: None,
-            seen_pos: None, seen: 0.0, rssi: None, messages: 0, source_type: None,
+            baro_rate: None, geom_rate: None, squawk: None, category: None,
+            lat: None, lon: None, seen_pos: None, seen: 0.0, rssi: None,
+            messages: 0, source_type: None,
+            ias: None, tas: None, mach: None, mag_heading: None, true_heading: None,
+            roll: None, track_rate: None,
+            nav_altitude_mcp: None, nav_altitude_fms: None, nav_qnh: None,
+            nav_heading: None, emergency: None, nav_modes: None,
+            nic: None, nac_p: None, nac_v: None, sil: None, sil_type: None,
+            gva: None, sda: None, nic_baro: None, adsb_version: None,
+            addr_type: 0,
             cpr_even: None, cpr_odd: None, last_update: t,
         });
         let ac = entry.value_mut();
@@ -96,12 +114,36 @@ impl Store {
         if let Some(gs) = msg.ground_speed { ac.gs = Some((gs * 10.0).round() / 10.0); }
         if let Some(trk) = msg.ground_track { ac.track = Some((trk * 10.0).round() / 10.0); }
         if let Some(vr) = msg.vert_rate { ac.baro_rate = Some(vr); }
+        if let Some(vr) = msg.geom_rate { ac.geom_rate = Some(vr); }
         if let Some(sq) = msg.squawk { ac.squawk = Some(format!("{:04o}", sq)); }
         if let Some(ref cs) = msg.callsign { ac.flight = Some(cs.clone()); }
         if let Some(cat) = msg.category {
-            let tc = msg.df; // approximate
+            let tc = msg.df;
             ac.category = Some(format!("{:02X}", ((0x0E - (tc / 4)) << 4) | cat));
         }
+        if let Some(v) = msg.ias { ac.ias = Some(v); }
+        if let Some(v) = msg.tas { ac.tas = Some(v); }
+        if let Some(v) = msg.mach { ac.mach = Some(v); }
+        if let Some(v) = msg.mag_heading { ac.mag_heading = Some((v * 10.0).round() / 10.0); }
+        if let Some(v) = msg.true_heading { ac.true_heading = Some((v * 10.0).round() / 10.0); }
+        if let Some(v) = msg.roll { ac.roll = Some((v * 10.0).round() / 10.0); }
+        if let Some(v) = msg.track_rate { ac.track_rate = Some((v * 100.0).round() / 100.0); }
+        if let Some(v) = msg.nav_altitude_mcp { ac.nav_altitude_mcp = Some(v); }
+        if let Some(v) = msg.nav_altitude_fms { ac.nav_altitude_fms = Some(v); }
+        if let Some(v) = msg.nav_qnh { ac.nav_qnh = Some((v * 10.0).round() / 10.0); }
+        if let Some(v) = msg.nav_heading { ac.nav_heading = Some((v * 10.0).round() / 10.0); }
+        if let Some(v) = msg.emergency { ac.emergency = Some(v); }
+        if let Some(v) = msg.nic { ac.nic = Some(v); }
+        if let Some(v) = msg.nac_p { ac.nac_p = Some(v); }
+        if let Some(v) = msg.nac_v { ac.nac_v = Some(v); }
+        if let Some(v) = msg.sil { ac.sil = Some(v); }
+        if let Some(v) = msg.sil_type { ac.sil_type = Some(v); }
+        if let Some(v) = msg.gva { ac.gva = Some(v); }
+        if let Some(v) = msg.sda { ac.sda = Some(v); }
+        if let Some(v) = msg.nic_baro { ac.nic_baro = Some(v); }
+        if let Some(v) = msg.adsb_version { ac.adsb_version = Some(v); }
+        if let Some(v) = msg.nav_modes { ac.nav_modes = Some(v); }
+        ac.addr_type = msg.addr_type;
 
         // CPR position decode
         if let (Some(lat), Some(lon), Some(odd)) = (msg.cpr_lat, msg.cpr_lon, msg.cpr_odd) {
@@ -158,11 +200,31 @@ impl Store {
             if let Some(v) = ac.gs { buf.push(b','); write_float(&mut buf, "gs", v); }
             if let Some(v) = ac.track { buf.push(b','); write_float(&mut buf, "track", v); }
             if let Some(v) = ac.baro_rate { buf.push(b','); write_int(&mut buf, "baro_rate", v); }
+            if let Some(v) = ac.geom_rate { buf.push(b','); write_int(&mut buf, "geom_rate", v); }
             if let Some(ref v) = ac.squawk { buf.push(b','); write_str(&mut buf, "squawk", v); }
             if let Some(ref v) = ac.category { buf.push(b','); write_str(&mut buf, "category", v); }
             if let Some(v) = ac.lat { buf.push(b','); write_float(&mut buf, "lat", v); }
             if let Some(v) = ac.lon { buf.push(b','); write_float(&mut buf, "lon", v); }
             if let Some(ref v) = ac.source_type { buf.push(b','); write_str(&mut buf, "type", v); }
+            if let Some(v) = ac.ias { buf.push(b','); write_int(&mut buf, "ias", v as i32); }
+            if let Some(v) = ac.tas { buf.push(b','); write_int(&mut buf, "tas", v as i32); }
+            if let Some(v) = ac.mach { buf.push(b','); write_float(&mut buf, "mach", v); }
+            if let Some(v) = ac.mag_heading { buf.push(b','); write_float(&mut buf, "mag_heading", v); }
+            if let Some(v) = ac.true_heading { buf.push(b','); write_float(&mut buf, "true_heading", v); }
+            if let Some(v) = ac.roll { buf.push(b','); write_float(&mut buf, "roll", v); }
+            if let Some(v) = ac.track_rate { buf.push(b','); write_float(&mut buf, "track_rate", v); }
+            if let Some(v) = ac.nav_altitude_mcp { buf.push(b','); write_int(&mut buf, "nav_altitude_mcp", v as i32); }
+            if let Some(v) = ac.nav_altitude_fms { buf.push(b','); write_int(&mut buf, "nav_altitude_fms", v as i32); }
+            if let Some(v) = ac.nav_qnh { buf.push(b','); write_float(&mut buf, "nav_qnh", v); }
+            if let Some(v) = ac.nav_heading { buf.push(b','); write_float(&mut buf, "nav_heading", v); }
+            if let Some(v) = ac.emergency { buf.push(b','); write_int(&mut buf, "emergency", v as i32); }
+            if let Some(v) = ac.nic { buf.push(b','); write_int(&mut buf, "nic", v as i32); }
+            if let Some(v) = ac.nac_p { buf.push(b','); write_int(&mut buf, "nac_p", v as i32); }
+            if let Some(v) = ac.nac_v { buf.push(b','); write_int(&mut buf, "nac_v", v as i32); }
+            if let Some(v) = ac.sil { buf.push(b','); write_int(&mut buf, "sil", v as i32); }
+            if let Some(v) = ac.gva { buf.push(b','); write_int(&mut buf, "gva", v as i32); }
+            if let Some(v) = ac.sda { buf.push(b','); write_int(&mut buf, "sda", v as i32); }
+            if let Some(v) = ac.adsb_version { buf.push(b','); write_int(&mut buf, "version", v as i32); }
             buf.push(b','); write_float(&mut buf, "seen", t - ac.last_update);
             if ac.lat.is_some() { buf.push(b','); write_float(&mut buf, "seen_pos", t - ac.last_update); }
             if let Some(v) = ac.rssi { buf.push(b','); write_float(&mut buf, "rssi", v); }
