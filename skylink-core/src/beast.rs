@@ -63,6 +63,14 @@ pub fn extract_frames(buf: &[u8]) -> (Vec<BeastFrame>, usize) {
 }
 
 pub async fn serve_ingest(store: Arc<Store>, port: u16) {
+    // Check for BEAST_CONNECT=host,port (client mode — connect to upstream)
+    if let Ok(upstream) = std::env::var("BEAST_CONNECT") {
+        tokio::spawn({
+            let store = store.clone();
+            async move { connect_upstream(store, upstream).await; }
+        });
+    }
+
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await
         .expect("failed to bind ingest port");
     info!("Beast ingest on :{}", port);
@@ -77,6 +85,21 @@ pub async fn serve_ingest(store: Arc<Store>, port: u16) {
             handle_feeder(socket, store).await;
             info!("feeder disconnected: {}", addr);
         });
+    }
+}
+
+async fn connect_upstream(store: Arc<Store>, addr: String) {
+    loop {
+        info!("connecting to upstream Beast: {}", addr);
+        match tokio::net::TcpStream::connect(&addr).await {
+            Ok(socket) => {
+                info!("upstream connected: {}", addr);
+                handle_feeder(socket, store.clone()).await;
+                warn!("upstream disconnected: {}", addr);
+            }
+            Err(e) => warn!("upstream connect failed: {} — {}", addr, e),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
 }
 

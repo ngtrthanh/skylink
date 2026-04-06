@@ -10,22 +10,10 @@ services:
       - /tmp
     environment:
       - RUST_LOG=info
-      - INGEST_PORT=39004
-      - OUTPUT_PORT=39005
+      - BEAST_CONNECT=skylink:30005
       - API_PORT=19180
     ports:
-      - "39004:39004"
       - "19180:19180"
-    networks:
-      - skynet
-
-  socat:
-    image: alpine/socat
-    container_name: skylink-socat
-    restart: unless-stopped
-    command: TCP:skylink:30005,retry=10,interval=5 TCP:skylink-core:39004
-    depends_on:
-      - skylink-core
     networks:
       - skynet
 
