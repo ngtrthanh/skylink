@@ -85,7 +85,19 @@ async fn receivers_json(State(store): State<Arc<Store>>) -> Response {
 // --- receiver.json ---
 
 async fn receiver_json() -> Response {
-    json_response(r#"{"refresh":1000,"history":0,"readsb":true,"dbServer":true,"haveTraces":false,"globeIndexGrid":3,"globeIndexSpecialTiles":[],"reapi":true,"binCraft":true,"zstd":true,"version":"skylink-core 0.3.0 (Rust)"}"#.into())
+    json_response(r#"{"refresh":1000,"history":0,"readsb":true,"dbServer":true,"haveTraces":false,"globeIndexGrid":3,"globeIndexSpecialTiles":[],"reapi":true,"binCraft":true,"zstd":false,"version":"skylink-core 0.3.0 (Rust)"}"#.into())
+}
+
+async fn receiver_pb() -> Response {
+    use prost::Message;
+    let r = crate::pb::readsb::Receiver {
+        version: "skylink-core 0.3.0 (Rust)".into(),
+        refresh: 1.0,
+        history: 0,
+        ..Default::default()
+    };
+    let body = r.encode_to_vec();
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/x-protobuf"), (header::CACHE_CONTROL, "no-cache")], body).into_response()
 }
 
 // --- re-api: unified query with filters ---
@@ -378,6 +390,7 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/data/aircraft.compact", get(aircraft_compact))
         .route("/data/aircraft_recent.json", get(aircraft_recent))
         .route("/data/receiver.json", get(receiver_json))
+        .route("/data/receiver.pb", get(receiver_pb))
         .route("/data/status.json", get(status_json))
         .route("/data/status.prom", get(status_prom))
         .route("/data/clients.json", get(clients_json))
