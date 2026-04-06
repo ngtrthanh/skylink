@@ -1,6 +1,6 @@
 services:
   skylink:
-    image: ghcr.io/sdr-enthusiasts/docker-tar1090@sha256:28717667cd7400b59507572dbb1388d0d79f3474972f682fcb98e9094a3a1331
+    image: ghcr.io/ngtrthanh/skylink@sha256:e000f4637951233d7daefcfffb1cbcd48e191110ed221afe72c86facd970c2de
     tty: true
     container_name: skylink
     hostname: skylink
@@ -32,14 +32,12 @@ services:
       - GZIP_LVL=1
       - TAR1090_FLIGHTAWARELINKS=true
       - TAR1090_ENABLE_AC_DB=true
-      - UPDATE_TAR1090=true
+      - UPDATE_TAR1090=false
       - TAR1090_USEROUTEAPI=false
       - GRAPHS1090_DARKMODE=false
     volumes:
       - ./data/graphs1090:/var/lib/collectd
-      - ./local/skylink-lc2:/var/tar1090_git_source
       - ./data/globe_history:/var/globe_history
-      - ./local/skylink-lc2/nginx-perf.conf:/etc/nginx/conf.d/perf.conf:ro
       - /proc/diskstats:/proc/diskstats:ro
     tmpfs:
       - /run:exec,size=3G

@@ -10,23 +10,14 @@ cd skylink
 docker compose up -d
 ```
 
-## Update image
+## Update
 
+Build new image from running container:
 ```bash
-docker pull ghcr.io/sdr-enthusiasts/docker-tar1090:latest
-docker inspect ghcr.io/sdr-enthusiasts/docker-tar1090:latest --format '{{index .RepoDigests 0}}'
-# Update sha256 in docker-compose.yml, commit, tag, push
-docker compose up -d
+docker commit skylink ghcr.io/ngtrthanh/skylink:vX.Y.Z
+docker push ghcr.io/ngtrthanh/skylink:vX.Y.Z
+# Update sha256 in docker-compose.yml
 ```
-
-## Customizations
-
-All in `local/skylink-lc2/` (mounted as `/var/tar1090_git_source`):
-- `html/config.js` — settings, receivers-overlay loader, myExtent clamp
-- `html/receivers-overlay.js` — feeder map overlay
-- `nginx-perf.conf` — gzip tuning
-
-**Never modify `script.js` directly** — use `config.js` for all customizations.
 
 ## Ports
 
