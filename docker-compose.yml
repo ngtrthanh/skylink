@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       - LOGLEVEL=error
-      - TZ=${FEEDER_TZ}
+      - TZ=Asia/Ho_Chi_Minh
       - READSB_ENABLE_API=true
       - GRAPHS1090_DISABLE=false
       - MAX_GLOBE_HISTORY=2
@@ -24,7 +24,6 @@ services:
         --net-buffer 4
         --net-connector-delay 5
       - READSB_NET_CONNECTOR=192.168.11.10,30004,beast_in;
-      - TAR1090_BINGMAPSAPIKEY=Alq7RH7qHgMmDk_L707lgKj7MNNQCwLiUSpauLs96M45remQCSBVA4Un5MBJA-Gc
       - TAR1090_PAGETITLE=Skylink
       - TAR1090_PLANECOUNTINTITLE=true
       - TAR1090_MESSAGERATEINTITLE=true
