@@ -11,9 +11,17 @@ services:
     environment:
       - RUST_LOG=info
       - BEAST_CONNECT=skylink:30005
+      - INGEST_PORT=39004
       - API_PORT=19180
+      - BASE_PORT=39000
     ports:
-      - "19180:19180"
+      - "19180:19180"     # HTTP API
+      - "39002:39002"     # Raw TCP output
+      - "39003:39003"     # SBS TCP output
+      - "39004:39004"     # Beast TCP input
+      - "39005:39005"     # Beast TCP output
+      - "39006:39006"     # BeastReduce TCP output
+      - "39047:39047"     # Position JSON output
     networks:
       - skynet
 

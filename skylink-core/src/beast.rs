@@ -7,6 +7,7 @@ use tracing::{info, warn};
 
 use crate::aircraft::Store;
 use crate::mode_s;
+use crate::output::OutputChannels;
 
 pub struct BeastFrame {
     pub signal: u8,
@@ -62,12 +63,12 @@ pub fn extract_frames(buf: &[u8]) -> (Vec<BeastFrame>, usize) {
     (frames, pos)
 }
 
-pub async fn serve_ingest(store: Arc<Store>, port: u16) {
-    // Check for BEAST_CONNECT=host,port (client mode — connect to upstream)
+pub async fn serve_ingest(store: Arc<Store>, channels: Arc<OutputChannels>, port: u16) {
     if let Ok(upstream) = std::env::var("BEAST_CONNECT") {
         tokio::spawn({
             let store = store.clone();
-            async move { connect_upstream(store, upstream).await; }
+            let ch = channels.clone();
+            async move { connect_upstream(store, ch, upstream).await; }
         });
     }
 
@@ -80,21 +81,22 @@ pub async fn serve_ingest(store: Arc<Store>, port: u16) {
             Ok(s) => s, Err(e) => { warn!("accept: {}", e); continue; }
         };
         let store = store.clone();
+        let ch = channels.clone();
         tokio::spawn(async move {
             info!("feeder connected: {}", addr);
-            handle_feeder(socket, store).await;
+            handle_feeder(socket, store, ch).await;
             info!("feeder disconnected: {}", addr);
         });
     }
 }
 
-async fn connect_upstream(store: Arc<Store>, addr: String) {
+async fn connect_upstream(store: Arc<Store>, channels: Arc<OutputChannels>, addr: String) {
     loop {
         info!("connecting to upstream Beast: {}", addr);
         match tokio::net::TcpStream::connect(&addr).await {
             Ok(socket) => {
                 info!("upstream connected: {}", addr);
-                handle_feeder(socket, store.clone()).await;
+                handle_feeder(socket, store.clone(), channels.clone()).await;
                 warn!("upstream disconnected: {}", addr);
             }
             Err(e) => warn!("upstream connect failed: {} — {}", addr, e),
@@ -103,7 +105,7 @@ async fn connect_upstream(store: Arc<Store>, addr: String) {
     }
 }
 
-async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>) {
+async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, channels: Arc<OutputChannels>) {
     let mut buf = vec![0u8; 64 * 1024];
     let mut carry = Vec::new();
 
@@ -112,6 +114,9 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>) {
             Ok(0) | Err(_) => return,
             Ok(n) => n,
         };
+
+        // Forward raw Beast bytes to beast output subscribers
+        let _ = channels.beast.send(buf[..n].to_vec());
 
         let mut data = Vec::with_capacity(carry.len() + n);
         data.extend_from_slice(&carry);
@@ -122,6 +127,12 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>) {
 
         for frame in frames {
             if let Some(msg) = mode_s::decode(&frame.payload) {
+                // Raw output: hex string per message
+                let raw_line = frame.payload.iter()
+                    .map(|b| format!("{:02X}", b))
+                    .collect::<String>() + "\n";
+                let _ = channels.raw.send(raw_line.into_bytes());
+
                 store.update_from_message(&msg, frame.signal);
             }
         }
