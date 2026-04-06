@@ -71,7 +71,7 @@ async fn receiver_json() -> Response {
 }
 
 async fn aircraft_pb(State(store): State<Arc<Store>>) -> Response {
-    let body = crate::pb::build_aircraft_pb(&store);
+    let body = store.pb_cache.read().clone();
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/x-protobuf"), (header::CACHE_CONTROL, "no-cache")],

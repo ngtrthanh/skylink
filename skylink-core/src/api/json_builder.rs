@@ -17,6 +17,9 @@ pub async fn run(store: Arc<Store>) {
         let bin = bincraft::build(&store);
         *store.bincraft_cache.write() = bytes::Bytes::from(bin);
 
+        let pb = crate::pb::build_aircraft_pb(&store);
+        *store.pb_cache.write() = bytes::Bytes::from(pb);
+
         let elapsed = t0.elapsed();
         if elapsed.as_millis() > 50 {
             let json_size = store.json_cache.read().len();
