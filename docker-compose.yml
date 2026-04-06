@@ -1,6 +1,6 @@
 services:
   skylink:
-    image: ghcr.io/sdr-enthusiasts/docker-tar1090:latest
+    image: ghcr.io/sdr-enthusiasts/docker-tar1090@sha256:28717667cd7400b59507572dbb1388d0d79f3474972f682fcb98e9094a3a1331
     tty: true
     container_name: skylink
     hostname: skylink
