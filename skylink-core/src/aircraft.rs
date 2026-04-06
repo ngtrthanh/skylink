@@ -238,6 +238,32 @@ impl Store {
     }
 }
 
+/// Build JSON filtered by bounding box
+pub fn build_json_filtered(store: &Store, south: f64, north: f64, west: f64, east: f64) -> Vec<u8> {
+    let t = now();
+    let total_msgs = store.messages_total.load(std::sync::atomic::Ordering::Relaxed);
+    let mut buf = Vec::with_capacity(256 * 1024);
+    buf.extend_from_slice(b"{\"now\":");
+    buf.extend_from_slice(format!("{:.1}", t).as_bytes());
+    buf.extend_from_slice(b",\"messages\":");
+    buf.extend_from_slice(total_msgs.to_string().as_bytes());
+    buf.extend_from_slice(b",\"aircraft\":[");
+    let mut first = true;
+    for entry in store.map.iter() {
+        let ac = entry.value();
+        if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
+            if lat >= south && lat <= north && crate::bincraft::lon_in_box(lon, west, east) {
+                if !first { buf.push(b','); }
+                first = false;
+                // Reuse serde for filtered (not hot path)
+                buf.extend_from_slice(&serde_json::to_vec(ac).unwrap_or_default());
+            }
+        }
+    }
+    buf.extend_from_slice(b"]}");
+    buf
+}
+
 // Fast manual JSON writers — avoid serde overhead
 fn write_str(buf: &mut Vec<u8>, key: &str, val: &str) {
     buf.push(b'"'); buf.extend_from_slice(key.as_bytes()); buf.extend_from_slice(b"\":\"");

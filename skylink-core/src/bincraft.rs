@@ -175,7 +175,7 @@ pub fn build_filtered(store: &Arc<Store>, south: f64, north: f64, west: f64, eas
     buf
 }
 
-fn lon_in_box(lon: f64, west: f64, east: f64) -> bool {
+pub fn lon_in_box(lon: f64, west: f64, east: f64) -> bool {
     if west <= east { lon >= west && lon <= east }
     else { lon >= west || lon <= east }
 }

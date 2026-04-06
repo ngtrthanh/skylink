@@ -28,37 +28,53 @@ async fn aircraft_bincraft(State(store): State<Arc<Store>>) -> Response {
     ).into_response()
 }
 
-/// re-api endpoint (tar1090 / ml_clf_fe use this)
-/// Supports: ?binCraft, ?binCraft&box=south,north,west,east, ?binCraft&zstd
+/// re-api endpoint — unified query interface for all 3 formats
+/// ?binCraft, ?pb, ?json (default)
+/// Optional: &zstd, &box=south,north,west,east
 async fn re_api(State(store): State<Arc<Store>>, axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>) -> Response {
+    let use_zstd = params.contains_key("zstd");
+    let bbox = params.get("box").and_then(|b| {
+        let p: Vec<f64> = b.split(',').filter_map(|s| s.parse().ok()).collect();
+        if p.len() == 4 { Some((p[0], p[1], p[2], p[3])) } else { None }
+    });
+
     if params.contains_key("binCraft") {
-        let use_zstd = params.contains_key("zstd");
-        let raw = if let Some(box_param) = params.get("box") {
-            let parts: Vec<f64> = box_param.split(',').filter_map(|s| s.parse().ok()).collect();
-            if parts.len() == 4 {
-                crate::bincraft::build_filtered(&store, parts[0], parts[1], parts[2], parts[3])
-            } else {
-                store.bincraft_cache.read().to_vec()
-            }
-        } else {
-            store.bincraft_cache.read().to_vec()
+        let raw = match bbox {
+            Some((s, n, w, e)) => crate::bincraft::build_filtered(&store, s, n, w, e),
+            None => store.bincraft_cache.read().to_vec(),
         };
-
-        let body = if use_zstd {
-            zstd::encode_all(raw.as_slice(), 1).unwrap_or(raw)
-        } else {
-            raw
-        };
-
-        return (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/octet-stream"),
-             (header::CACHE_CONTROL, "no-cache"),
-             (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
-            body,
-        ).into_response();
+        return serve_binary(raw, use_zstd, "application/octet-stream");
     }
-    aircraft_json(State(store)).await
+
+    if params.contains_key("pb") {
+        let raw = match bbox {
+            Some((s, n, w, e)) => crate::pb::build_filtered(&store, s, n, w, e),
+            None => store.pb_cache.read().to_vec(),
+        };
+        return serve_binary(raw, use_zstd, "application/x-protobuf");
+    }
+
+    // JSON (default)
+    let raw = match bbox {
+        Some((s, n, w, e)) => crate::aircraft::build_json_filtered(&store, s, n, w, e),
+        None => store.json_cache.read().to_vec(),
+    };
+    serve_binary(raw, use_zstd, "application/json")
+}
+
+fn serve_binary(raw: Vec<u8>, use_zstd: bool, content_type: &'static str) -> Response {
+    let body = if use_zstd {
+        zstd::encode_all(raw.as_slice(), 1).unwrap_or(raw)
+    } else {
+        raw
+    };
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, content_type),
+         (header::CACHE_CONTROL, "no-cache"),
+         (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+        body,
+    ).into_response()
 }
 
 async fn receiver_json() -> Response {
@@ -79,6 +95,18 @@ async fn aircraft_pb(State(store): State<Arc<Store>>) -> Response {
     ).into_response()
 }
 
+async fn aircraft_pb_zstd(State(store): State<Arc<Store>>) -> Response {
+    let raw = store.pb_cache.read().clone();
+    let body = zstd::encode_all(raw.as_ref(), 1).unwrap_or(raw.to_vec());
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/x-protobuf"),
+         (header::CONTENT_ENCODING, "zstd"),
+         (header::CACHE_CONTROL, "no-cache")],
+        body,
+    ).into_response()
+}
+
 async fn stats(State(store): State<Arc<Store>>) -> Response {
     let total = store.map.len();
     let with_pos = store.map.iter().filter(|e| e.value().lat.is_some()).count();
@@ -92,6 +120,7 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/data/aircraft.json", get(aircraft_json))
         .route("/data/aircraft.binCraft", get(aircraft_bincraft))
         .route("/data/aircraft.pb", get(aircraft_pb))
+        .route("/data/aircraft.pb.zst", get(aircraft_pb_zstd))
         .route("/data/receiver.json", get(receiver_json))
         .route("/re-api/", get(re_api))
         .route("/stats", get(stats))

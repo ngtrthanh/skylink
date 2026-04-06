@@ -9,17 +9,31 @@ use prost::Message;
 use std::sync::Arc;
 
 pub fn build_aircraft_pb(store: &Arc<Store>) -> Vec<u8> {
+    build_pb_inner(store, None)
+}
+
+pub fn build_filtered(store: &Arc<Store>, south: f64, north: f64, west: f64, east: f64) -> Vec<u8> {
+    build_pb_inner(store, Some((south, north, west, east)))
+}
+
+fn build_pb_inner(store: &Arc<Store>, bbox: Option<(f64, f64, f64, f64)>) -> Vec<u8> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
     let total_msgs = store.messages_total.load(std::sync::atomic::Ordering::Relaxed);
     let now_s = now_ms as f64 / 1000.0;
 
-    let aircraft: Vec<readsb::AircraftMeta> = store.map.iter().map(|entry| {
+    let aircraft: Vec<readsb::AircraftMeta> = store.map.iter().filter_map(|entry| {
         let ac = entry.value();
+        if let Some((s, n, w, e)) = bbox {
+            match (ac.lat, ac.lon) {
+                (Some(lat), Some(lon)) if lat >= s && lat <= n && crate::bincraft::lon_in_box(lon, w, e) => {},
+                _ => return None,
+            }
+        }
         let icao = *entry.key();
         let seen_ms = ((now_s - ac.last_update) * 1000.0) as u64;
 
-        readsb::AircraftMeta {
+        Some(readsb::AircraftMeta {
             addr: icao,
             flight: ac.flight.clone().unwrap_or_default(),
             squawk: ac.squawk.as_ref().and_then(|s| u32::from_str_radix(s, 8).ok()).unwrap_or(0),
@@ -59,7 +73,7 @@ pub fn build_aircraft_pb(store: &Arc<Store>) -> Vec<u8> {
             emergency: ac.emergency.unwrap_or(0) as i32,
             addr_type: ac.addr_type as i32,
             ..Default::default()
-        }
+        })
     }).collect();
 
     let update = readsb::AircraftsUpdate {
