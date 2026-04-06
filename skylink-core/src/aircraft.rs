@@ -67,6 +67,10 @@ pub struct Store {
     pub json_cache: RwLock<bytes::Bytes>,
     /// Pre-built binCraft response — updated every ~1s
     pub bincraft_cache: RwLock<bytes::Bytes>,
+    /// Pre-built zstd-compressed caches
+    pub json_zstd_cache: RwLock<bytes::Bytes>,
+    pub bincraft_zstd_cache: RwLock<bytes::Bytes>,
+    pub pb_zstd_cache: RwLock<bytes::Bytes>,
     /// Pre-built protobuf response
     pub pb_cache: RwLock<bytes::Bytes>,
     pub messages_total: std::sync::atomic::AtomicU64,
@@ -78,6 +82,9 @@ impl Store {
             map: DashMap::with_capacity(16384),
             json_cache: RwLock::new(bytes::Bytes::from_static(b"{\"now\":0,\"messages\":0,\"aircraft\":[]}")),
             bincraft_cache: RwLock::new(bytes::Bytes::new()),
+            json_zstd_cache: RwLock::new(bytes::Bytes::new()),
+            bincraft_zstd_cache: RwLock::new(bytes::Bytes::new()),
+            pb_zstd_cache: RwLock::new(bytes::Bytes::new()),
             pb_cache: RwLock::new(bytes::Bytes::new()),
             messages_total: std::sync::atomic::AtomicU64::new(0),
         }

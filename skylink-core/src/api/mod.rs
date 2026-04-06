@@ -39,26 +39,35 @@ async fn re_api(State(store): State<Arc<Store>>, axum::extract::Query(params): a
     });
 
     if params.contains_key("binCraft") {
-        let raw = match bbox {
-            Some((s, n, w, e)) => crate::bincraft::build_filtered(&store, s, n, w, e),
-            None => store.bincraft_cache.read().to_vec(),
+        let (raw, zstd_cached) = match bbox {
+            Some((s, n, w, e)) => (crate::bincraft::build_filtered(&store, s, n, w, e), None),
+            None => (vec![], Some(if use_zstd { store.bincraft_zstd_cache.read().clone() } else { store.bincraft_cache.read().clone() })),
         };
+        if let Some(cached) = zstd_cached {
+            return (StatusCode::OK, [(header::CONTENT_TYPE, "application/octet-stream"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], cached).into_response();
+        }
         return serve_binary(raw, use_zstd, "application/octet-stream");
     }
 
     if params.contains_key("pb") {
-        let raw = match bbox {
-            Some((s, n, w, e)) => crate::pb::build_filtered(&store, s, n, w, e),
-            None => store.pb_cache.read().to_vec(),
+        let (raw, zstd_cached) = match bbox {
+            Some((s, n, w, e)) => (crate::pb::build_filtered(&store, s, n, w, e), None),
+            None => (vec![], Some(if use_zstd { store.pb_zstd_cache.read().clone() } else { store.pb_cache.read().clone() })),
         };
+        if let Some(cached) = zstd_cached {
+            return (StatusCode::OK, [(header::CONTENT_TYPE, "application/x-protobuf"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], cached).into_response();
+        }
         return serve_binary(raw, use_zstd, "application/x-protobuf");
     }
 
     // JSON (default)
-    let raw = match bbox {
-        Some((s, n, w, e)) => crate::aircraft::build_json_filtered(&store, s, n, w, e),
-        None => store.json_cache.read().to_vec(),
+    let (raw, zstd_cached) = match bbox {
+        Some((s, n, w, e)) => (crate::aircraft::build_json_filtered(&store, s, n, w, e), None),
+        None => (vec![], Some(if use_zstd { store.json_zstd_cache.read().clone() } else { store.json_cache.read().clone() })),
     };
+    if let Some(cached) = zstd_cached {
+        return (StatusCode::OK, [(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], cached).into_response();
+    }
     serve_binary(raw, use_zstd, "application/json")
 }
 
