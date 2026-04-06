@@ -435,3 +435,19 @@ tableColors = {
 // Default center of the map if no Site location is set
 //DefaultCenterLat = 45.0;
 //DefaultCenterLon = 9.0;
+
+// Clamp myExtent to valid world bounds
+var _origMyExtent = null;
+window.addEventListener('load', function() {
+  if (typeof myExtent === 'function' && !_origMyExtent) {
+    _origMyExtent = myExtent;
+    myExtent = function(extent) {
+      var r = _origMyExtent(extent);
+      r.minLat = Math.max(-90, Math.min(90, r.minLat));
+      r.maxLat = Math.max(-90, Math.min(90, r.maxLat));
+      r.minLon = Math.max(-180, Math.min(180, r.minLon));
+      r.maxLon = Math.max(-180, Math.min(180, r.maxLon));
+      return r;
+    };
+  }
+});
