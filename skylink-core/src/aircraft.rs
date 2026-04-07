@@ -55,6 +55,11 @@ pub struct Aircraft {
     #[serde(skip_serializing_if = "Option::is_none")] pub adsb_version: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")] pub nav_modes: Option<u8>,
     #[serde(skip)] pub addr_type: u8,
+    /// Type designator from aircraft DB (e.g. "B738", "A320")
+    #[serde(skip_serializing_if = "Option::is_none")] pub r: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub t: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub desc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub wtc: Option<String>,
 
     #[serde(skip)] pub cpr_even: Option<(u32, u32, f64)>,
     #[serde(skip)] pub cpr_odd: Option<(u32, u32, f64)>,
@@ -78,6 +83,8 @@ pub struct TracePoint {
 
 pub struct Store {
     pub map: DashMap<u32, Aircraft>,
+    /// Aircraft database for type lookups
+    pub db: crate::db::AircraftDb,
     /// Pre-built JSON response — updated every ~1s by json_builder
     pub json_cache: RwLock<bytes::Bytes>,
     /// Pre-built binCraft response — updated every ~1s
@@ -110,6 +117,7 @@ impl Store {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
         Self {
             map: DashMap::with_capacity(16384),
+            db: crate::db::AircraftDb::load(),
             json_cache: RwLock::new(bytes::Bytes::from_static(b"{\"now\":0,\"messages\":0,\"aircraft\":[]}")),
             bincraft_cache: RwLock::new(bytes::Bytes::new()),
             json_zstd_cache: RwLock::new(bytes::Bytes::new()),
@@ -132,8 +140,20 @@ impl Store {
         let t = now();
         self.messages_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
+        let hex_str = format!("{:06x}", msg.icao);
+        let db_info = self.db.aircraft.get(&hex_str);
+        let (r_val, t_val, desc_val, wtc_val) = match db_info {
+            Some((reg, td)) => {
+                let (d, w) = self.db.get_type_info(td).unwrap_or(("", ""));
+                (Some(reg.clone()), Some(td.clone()),
+                 if d.is_empty() { None } else { Some(d.to_string()) },
+                 if w.is_empty() { None } else { Some(w.to_string()) })
+            }
+            None => (None, None, None, None),
+        };
+
         let mut entry = self.map.entry(msg.icao).or_insert_with(|| Aircraft {
-            hex: format!("{:06x}", msg.icao),
+            hex: hex_str,
             flight: None, alt_baro: None, alt_geom: None, gs: None, track: None,
             baro_rate: None, geom_rate: None, squawk: None, category: None,
             lat: None, lon: None, seen_pos: None, seen: 0.0, rssi: None,
@@ -145,6 +165,7 @@ impl Store {
             nic: None, nac_p: None, nac_v: None, sil: None, sil_type: None,
             gva: None, sda: None, nic_baro: None, adsb_version: None,
             addr_type: 0,
+            r: r_val, t: t_val, desc: desc_val, wtc: wtc_val,
             cpr_even: None, cpr_odd: None, last_update: t, last_pos_update: 0.0,
             trace: Vec::new(),
         });

@@ -34,6 +34,9 @@ pub fn build(store: &Arc<Store>) -> Vec<u8> {
         if let Some(v) = ac.baro_rate { buf.push(b','); write_kv_int(&mut buf, "baro_rate", v); }
         if let Some(ref v) = ac.squawk { buf.push(b','); write_str(&mut buf, "squawk", v); }
         if let Some(ref v) = ac.category { buf.push(b','); write_str(&mut buf, "category", v); }
+        if let Some(ref v) = ac.t { buf.push(b','); write_str(&mut buf, "t", v); }
+        if let Some(ref v) = ac.desc { buf.push(b','); write_str(&mut buf, "desc", v); }
+        if let Some(ref v) = ac.wtc { buf.push(b','); write_str(&mut buf, "wtc", v); }
         if let Some(v) = ac.mag_heading { buf.push(b','); write_kv_f1(&mut buf, "mag_heading", v); }
         if let Some(v) = ac.ias { buf.push(b','); write_kv_int(&mut buf, "ias", v as i32); }
         if let Some(v) = ac.mach { buf.push(b','); write_kv_f3(&mut buf, "mach", v); }
@@ -77,6 +80,9 @@ pub fn build_filtered(store: &Arc<Store>, south: f64, north: f64, west: f64, eas
         if let Some(v) = ac.track { buf.push(b','); write_kv_f1(&mut buf, "track", v); }
         if let Some(ref v) = ac.squawk { buf.push(b','); write_str(&mut buf, "squawk", v); }
         if let Some(ref v) = ac.category { buf.push(b','); write_str(&mut buf, "category", v); }
+        if let Some(ref v) = ac.t { buf.push(b','); write_str(&mut buf, "t", v); }
+        if let Some(ref v) = ac.desc { buf.push(b','); write_str(&mut buf, "desc", v); }
+        if let Some(ref v) = ac.wtc { buf.push(b','); write_str(&mut buf, "wtc", v); }
         buf.push(b','); write_kv_f1(&mut buf, "seen", now - ac.last_update);
         buf.extend_from_slice(b"}}");
     }

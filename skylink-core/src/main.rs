@@ -1,6 +1,7 @@
 mod beast;
 mod mode_s;
 mod aircraft;
+mod db;
 mod api;
 mod bincraft;
 mod output;
