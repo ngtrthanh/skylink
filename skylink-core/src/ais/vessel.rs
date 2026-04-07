@@ -1,8 +1,81 @@
-/// Vessel data model and store
+/// Vessel data model, store, paths, classification, and statistics
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+// --- Path ring buffer ---
+const MAX_PATH_POINTS: usize = 256;
+
+#[derive(Clone, Copy)]
+pub struct PathPoint {
+    pub lat: f32,
+    pub lon: f32,
+    pub ts: f64,
+    pub speed: f32,
+    pub cog: f32,
+}
+
+#[derive(Clone)]
+pub struct PathBuffer {
+    buf: Vec<PathPoint>,
+    head: usize,
+    len: usize,
+}
+
+impl PathBuffer {
+    fn new() -> Self { Self { buf: vec![PathPoint { lat: 0.0, lon: 0.0, ts: 0.0, speed: 0.0, cog: 0.0 }; MAX_PATH_POINTS], head: 0, len: 0 } }
+    fn push(&mut self, p: PathPoint) {
+        self.buf[self.head] = p;
+        self.head = (self.head + 1) % MAX_PATH_POINTS;
+        if self.len < MAX_PATH_POINTS { self.len += 1; }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &PathPoint> {
+        let start = if self.len < MAX_PATH_POINTS { 0 } else { self.head };
+        let buf = &self.buf;
+        let len = self.len;
+        (0..len).map(move |i| &buf[(start + i) % MAX_PATH_POINTS])
+    }
+}
+
+// --- Ship type classification ---
+pub fn ship_type_class(shiptype: u8) -> &'static str {
+    match shiptype {
+        20..=29 => "WIG",
+        30 => "Fishing",
+        31..=32 => "Towing",
+        33 => "Dredging",
+        34 => "Diving",
+        35 => "Military",
+        36 => "Sailing",
+        37 => "Pleasure",
+        40..=49 => "HSC",
+        50 => "Pilot",
+        51 => "SAR",
+        52 => "Tug",
+        53 => "Port Tender",
+        54 => "Anti-Pollution",
+        55 => "Law Enforcement",
+        58 => "Medical",
+        60..=69 => "Passenger",
+        70..=79 => "Cargo",
+        80..=89 => "Tanker",
+        90..=99 => "Other",
+        _ => "Unknown",
+    }
+}
+
+pub fn ship_class_name(shipclass: u8) -> &'static str {
+    match shipclass {
+        1 => "A",
+        2 => "B",
+        3 => "Base Station",
+        4 => "SAR Aircraft",
+        5 => "ATON",
+        _ => "Unknown",
+    }
+}
+
+// --- Update struct ---
 #[derive(Clone, Default)]
 pub struct VesselUpdate {
     pub mmsi: u32,
@@ -29,8 +102,11 @@ pub struct VesselUpdate {
     pub eta_day: Option<u8>,
     pub eta_hour: Option<u8>,
     pub eta_minute: Option<u8>,
+    pub altitude: Option<u16>,
+    pub text: Option<String>,
 }
 
+// --- Vessel ---
 #[derive(Clone)]
 pub struct Vessel {
     pub mmsi: u32,
@@ -56,10 +132,12 @@ pub struct Vessel {
     pub eta_day: Option<u8>,
     pub eta_hour: Option<u8>,
     pub eta_minute: Option<u8>,
+    pub altitude: Option<u16>,
     pub country: String,
     pub count: u32,
     pub last_signal: f64,
     pub last_pos_update: f64,
+    pub path: PathBuffer,
 }
 
 impl Vessel {
@@ -69,10 +147,11 @@ impl Vessel {
             lat: None, lon: None, speed: None, cog: None, heading: None,
             status: None, turn: None, shiptype: 0, shipclass: 0,
             shipname: String::new(), callsign: String::new(), destination: String::new(),
-            imo: None, draught: None,
+            imo: None, draught: None, altitude: None,
             to_bow: None, to_stern: None, to_port: None, to_starboard: None,
             eta_month: None, eta_day: None, eta_hour: None, eta_minute: None,
             count: 0, last_signal: 0.0, last_pos_update: 0.0,
+            path: PathBuffer::new(),
         }
     }
 
@@ -81,8 +160,28 @@ impl Vessel {
         self.count += 1;
         self.last_signal = now;
         if u.shipclass != 0 { self.shipclass = u.shipclass; }
-        if let Some(v) = u.lat { self.lat = Some(v); self.last_pos_update = now; }
-        if let Some(v) = u.lon { self.lon = Some(v); }
+        if let (Some(lat), Some(lon)) = (u.lat, u.lon) {
+            // Add to path if moved enough or enough time passed
+            let should_add = match (self.lat, self.lon) {
+                (Some(olat), Some(olon)) => {
+                    let dt = now - self.last_pos_update;
+                    let dlat = (lat - olat).abs();
+                    let dlon = (lon - olon).abs();
+                    dt >= 4.0 || dlat > 0.0005 || dlon > 0.0005
+                }
+                _ => true,
+            };
+            self.lat = Some(lat);
+            self.lon = Some(lon);
+            if should_add {
+                self.last_pos_update = now;
+                self.path.push(PathPoint {
+                    lat, lon, ts: now,
+                    speed: u.speed.unwrap_or(self.speed.unwrap_or(0.0)),
+                    cog: u.cog.unwrap_or(self.cog.unwrap_or(0.0)),
+                });
+            }
+        }
         if let Some(v) = u.speed { self.speed = Some(v); }
         if let Some(v) = u.cog { self.cog = Some(v); }
         if let Some(v) = u.heading { self.heading = Some(v); }
@@ -94,6 +193,7 @@ impl Vessel {
         if let Some(ref v) = u.destination { if !v.is_empty() { self.destination = v.clone(); } }
         if let Some(v) = u.imo { self.imo = Some(v); }
         if let Some(v) = u.draught { self.draught = Some(v); }
+        if let Some(v) = u.altitude { self.altitude = Some(v); }
         if let Some(v) = u.to_bow { self.to_bow = Some(v); }
         if let Some(v) = u.to_stern { self.to_stern = Some(v); }
         if let Some(v) = u.to_port { self.to_port = Some(v); }
@@ -103,11 +203,67 @@ impl Vessel {
         if let Some(v) = u.eta_hour { self.eta_hour = Some(v); }
         if let Some(v) = u.eta_minute { self.eta_minute = Some(v); }
     }
+
+    pub fn type_class(&self) -> &'static str { ship_type_class(self.shiptype) }
+    pub fn class_name(&self) -> &'static str { ship_class_name(self.shipclass) }
 }
 
+// --- Statistics ---
+pub struct AisStats {
+    pub msg_counts: [AtomicU64; 28], // per message type 0-27
+    pub class_a: AtomicU64,
+    pub class_b: AtomicU64,
+    pub base_station: AtomicU64,
+    pub aton: AtomicU64,
+    pub sar: AtomicU64,
+}
+
+impl AisStats {
+    fn new() -> Self {
+        Self {
+            msg_counts: std::array::from_fn(|_| AtomicU64::new(0)),
+            class_a: AtomicU64::new(0),
+            class_b: AtomicU64::new(0),
+            base_station: AtomicU64::new(0),
+            aton: AtomicU64::new(0),
+            sar: AtomicU64::new(0),
+        }
+    }
+    pub fn record(&self, msg_type: u8, shipclass: u8) {
+        if (msg_type as usize) < 28 { self.msg_counts[msg_type as usize].fetch_add(1, Ordering::Relaxed); }
+        match shipclass {
+            1 => { self.class_a.fetch_add(1, Ordering::Relaxed); }
+            2 => { self.class_b.fetch_add(1, Ordering::Relaxed); }
+            3 => { self.base_station.fetch_add(1, Ordering::Relaxed); }
+            4 => { self.sar.fetch_add(1, Ordering::Relaxed); }
+            5 => { self.aton.fetch_add(1, Ordering::Relaxed); }
+            _ => {}
+        }
+    }
+    pub fn to_json(&self) -> String {
+        let mut out = String::from("{\"msg_types\":{");
+        let mut first = true;
+        for i in 0..28 {
+            let c = self.msg_counts[i].load(Ordering::Relaxed);
+            if c > 0 {
+                if !first { out.push(','); }
+                first = false;
+                out.push_str(&format!("\"{}\":{}", i, c));
+            }
+        }
+        out.push_str(&format!("}},\"class_a\":{},\"class_b\":{},\"base_station\":{},\"aton\":{},\"sar\":{}}}",
+            self.class_a.load(Ordering::Relaxed), self.class_b.load(Ordering::Relaxed),
+            self.base_station.load(Ordering::Relaxed), self.aton.load(Ordering::Relaxed),
+            self.sar.load(Ordering::Relaxed)));
+        out
+    }
+}
+
+// --- Store ---
 pub struct VesselStore {
     pub map: DashMap<u32, Vessel>,
     pub messages_total: AtomicU64,
+    pub stats: AisStats,
     pub json_cache: parking_lot::RwLock<bytes::Bytes>,
     pub geojson_cache: parking_lot::RwLock<bytes::Bytes>,
 }
@@ -117,6 +273,7 @@ impl VesselStore {
         Self {
             map: DashMap::new(),
             messages_total: AtomicU64::new(0),
+            stats: AisStats::new(),
             json_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
             geojson_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
         }
@@ -124,6 +281,7 @@ impl VesselStore {
 
     pub fn update(&self, u: VesselUpdate) {
         self.messages_total.fetch_add(1, Ordering::Relaxed);
+        self.stats.record(u.msg_type, u.shipclass);
         self.map.entry(u.mmsi).or_insert_with(|| Vessel::new(u.mmsi)).apply(&u);
     }
 
@@ -134,12 +292,12 @@ impl VesselStore {
 
     fn build_json(&self) -> Vec<u8> {
         let now = now_secs();
-        let mut out = String::with_capacity(self.map.len() * 256);
+        let mut out = String::with_capacity(self.map.len() * 300);
         out.push_str("{\"vessels\":[");
         let mut first = true;
         for entry in self.map.iter() {
             let v = entry.value();
-            if now - v.last_signal > 600.0 { continue; } // 10min timeout
+            if now - v.last_signal > 600.0 { continue; }
             if !first { out.push(','); }
             first = false;
             vessel_json(v, &mut out, now);
@@ -159,19 +317,7 @@ impl VesselStore {
             let (lat, lon) = match (v.lat, v.lon) { (Some(a), Some(b)) => (a, b), _ => continue };
             if !first { out.push(','); }
             first = false;
-            out.push_str(&format!(
-                "{{\"type\":\"Feature\",\"geometry\":{{\"type\":\"Point\",\"coordinates\":[{lon},{lat}]}},\"properties\":{{"));
-            out.push_str(&format!("\"mmsi\":{},\"shipname\":\"{}\",\"callsign\":\"{}\",\"shiptype\":{},\"shipclass\":{},\"country\":\"{}\"",
-                v.mmsi, esc(&v.shipname), esc(&v.callsign), v.shiptype, v.shipclass, v.country));
-            if let Some(s) = v.speed { out.push_str(&format!(",\"speed\":{s:.1}")); }
-            if let Some(c) = v.cog { out.push_str(&format!(",\"cog\":{c:.1}")); }
-            if let Some(h) = v.heading { out.push_str(&format!(",\"heading\":{h}")); }
-            if let Some(s) = v.status { out.push_str(&format!(",\"status\":{s}")); }
-            if !v.destination.is_empty() { out.push_str(&format!(",\"destination\":\"{}\"", esc(&v.destination))); }
-            if let Some(i) = v.imo { out.push_str(&format!(",\"imo\":{i}")); }
-            if let Some(d) = v.draught { out.push_str(&format!(",\"draught\":{d:.1}")); }
-            out.push_str(&format!(",\"count\":{},\"last_signal\":{:.0}", v.count, now - v.last_signal));
-            out.push_str("}}");
+            write_geojson_feature(v, lat, lon, &mut out, now);
         }
         out.push_str("]}");
         out.into_bytes()
@@ -191,16 +337,61 @@ impl VesselStore {
             if !lon_ok { continue; }
             if !first { out.push(','); }
             first = false;
-            out.push_str(&format!(
-                "{{\"type\":\"Feature\",\"geometry\":{{\"type\":\"Point\",\"coordinates\":[{lon},{lat}]}},\"properties\":{{"));
-            out.push_str(&format!("\"mmsi\":{},\"shipname\":\"{}\",\"shiptype\":{},\"shipclass\":{}",
-                v.mmsi, esc(&v.shipname), v.shiptype, v.shipclass));
-            if let Some(s) = v.speed { out.push_str(&format!(",\"speed\":{s:.1}")); }
-            if let Some(c) = v.cog { out.push_str(&format!(",\"cog\":{c:.1}")); }
-            if let Some(h) = v.heading { out.push_str(&format!(",\"heading\":{h}")); }
-            if let Some(s) = v.status { out.push_str(&format!(",\"status\":{s}")); }
-            out.push_str(&format!(",\"country\":\"{}\"", v.country));
-            out.push_str("}}");
+            write_geojson_feature(v, lat as f32, lon as f32, &mut out, now);
+        }
+        out.push_str("]}");
+        out.into_bytes()
+    }
+
+    pub fn get_path_json(&self, mmsi: u32) -> Option<String> {
+        let entry = self.map.get(&mmsi)?;
+        let v = entry.value();
+        let mut out = String::with_capacity(v.path.len * 64);
+        out.push_str(&format!("{{\"mmsi\":{},\"path\":[", mmsi));
+        let mut first = true;
+        for p in v.path.iter() {
+            if !first { out.push(','); }
+            first = false;
+            out.push_str(&format!("[{},{},{:.0},{:.1},{:.1}]", p.lat, p.lon, p.ts, p.speed, p.cog));
+        }
+        out.push_str("]}");
+        Some(out)
+    }
+
+    pub fn get_path_geojson(&self, mmsi: u32) -> Option<String> {
+        let entry = self.map.get(&mmsi)?;
+        let v = entry.value();
+        if v.path.len < 2 { return None; }
+        let mut coords = String::new();
+        let mut first = true;
+        for p in v.path.iter() {
+            if !first { coords.push(','); }
+            first = false;
+            coords.push_str(&format!("[{},{}]", p.lon, p.lat));
+        }
+        Some(format!("{{\"type\":\"Feature\",\"geometry\":{{\"type\":\"LineString\",\"coordinates\":[{coords}]}},\"properties\":{{\"mmsi\":{},\"shipname\":\"{}\"}}}}",
+            mmsi, esc(&v.shipname)))
+    }
+
+    pub fn get_all_paths_geojson(&self) -> Vec<u8> {
+        let now = now_secs();
+        let mut out = String::with_capacity(8192);
+        out.push_str("{\"type\":\"FeatureCollection\",\"features\":[");
+        let mut first = true;
+        for entry in self.map.iter() {
+            let v = entry.value();
+            if now - v.last_signal > 600.0 || v.path.len < 2 { continue; }
+            if !first { out.push(','); }
+            first = false;
+            out.push_str(&format!("{{\"type\":\"Feature\",\"geometry\":{{\"type\":\"LineString\",\"coordinates\":["));
+            let mut fp = true;
+            for p in v.path.iter() {
+                if !fp { out.push(','); }
+                fp = false;
+                out.push_str(&format!("[{},{}]", p.lon, p.lat));
+            }
+            out.push_str(&format!("]}},\"properties\":{{\"mmsi\":{},\"shipname\":\"{}\",\"shiptype\":{},\"type_class\":\"{}\"}}}}",
+                v.mmsi, esc(&v.shipname), v.shiptype, v.type_class()));
         }
         out.push_str("]}");
         out.into_bytes()
@@ -219,10 +410,26 @@ pub async fn reaper(store: Arc<VesselStore>) {
 /// Cache rebuild loop (1s)
 pub async fn cache_loop(store: Arc<VesselStore>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-    loop {
-        interval.tick().await;
-        store.rebuild_caches();
-    }
+    loop { interval.tick().await; store.rebuild_caches(); }
+}
+
+// --- JSON helpers ---
+
+fn write_geojson_feature(v: &Vessel, lat: f32, lon: f32, out: &mut String, now: f64) {
+    out.push_str(&format!(
+        "{{\"type\":\"Feature\",\"geometry\":{{\"type\":\"Point\",\"coordinates\":[{lon},{lat}]}},\"properties\":{{"));
+    out.push_str(&format!("\"mmsi\":{},\"shipname\":\"{}\",\"callsign\":\"{}\",\"shiptype\":{},\"shipclass\":{},\"type_class\":\"{}\",\"class_name\":\"{}\",\"country\":\"{}\"",
+        v.mmsi, esc(&v.shipname), esc(&v.callsign), v.shiptype, v.shipclass, v.type_class(), v.class_name(), v.country));
+    if let Some(s) = v.speed { out.push_str(&format!(",\"speed\":{s:.1}")); }
+    if let Some(c) = v.cog { out.push_str(&format!(",\"cog\":{c:.1}")); }
+    if let Some(h) = v.heading { out.push_str(&format!(",\"heading\":{h}")); }
+    if let Some(s) = v.status { out.push_str(&format!(",\"status\":{s}")); }
+    if !v.destination.is_empty() { out.push_str(&format!(",\"destination\":\"{}\"", esc(&v.destination))); }
+    if let Some(i) = v.imo { out.push_str(&format!(",\"imo\":{i}")); }
+    if let Some(d) = v.draught { out.push_str(&format!(",\"draught\":{d:.1}")); }
+    if let Some(a) = v.altitude { out.push_str(&format!(",\"altitude\":{a}")); }
+    out.push_str(&format!(",\"count\":{},\"last_signal\":{:.0}", v.count, now - v.last_signal));
+    out.push_str("}}");
 }
 
 pub fn vessel_json_pub(v: &Vessel, out: &mut String, now: f64) { vessel_json(v, out, now); }
@@ -238,10 +445,20 @@ fn vessel_json(v: &Vessel, out: &mut String, now: f64) {
     if !v.shipname.is_empty() { out.push_str(&format!(",\"shipname\":\"{}\"", esc(&v.shipname))); }
     if !v.callsign.is_empty() { out.push_str(&format!(",\"callsign\":\"{}\"", esc(&v.callsign))); }
     if !v.destination.is_empty() { out.push_str(&format!(",\"destination\":\"{}\"", esc(&v.destination))); }
-    out.push_str(&format!(",\"shiptype\":{},\"shipclass\":{},\"country\":\"{}\"", v.shiptype, v.shipclass, v.country));
+    out.push_str(&format!(",\"shiptype\":{},\"type_class\":\"{}\",\"shipclass\":{},\"class_name\":\"{}\",\"country\":\"{}\"",
+        v.shiptype, v.type_class(), v.shipclass, v.class_name(), v.country));
     if let Some(i) = v.imo { out.push_str(&format!(",\"imo\":{i}")); }
     if let Some(d) = v.draught { out.push_str(&format!(",\"draught\":{d:.1}")); }
-    out.push_str(&format!(",\"count\":{},\"last_signal\":{:.0}}}", v.count, now - v.last_signal));
+    if let Some(a) = v.altitude { out.push_str(&format!(",\"altitude\":{a}")); }
+    if v.to_bow.is_some() {
+        out.push_str(&format!(",\"to_bow\":{},\"to_stern\":{},\"to_port\":{},\"to_starboard\":{}",
+            v.to_bow.unwrap_or(0), v.to_stern.unwrap_or(0), v.to_port.unwrap_or(0), v.to_starboard.unwrap_or(0)));
+    }
+    if v.eta_month.is_some() {
+        out.push_str(&format!(",\"eta_month\":{},\"eta_day\":{},\"eta_hour\":{},\"eta_minute\":{}",
+            v.eta_month.unwrap_or(0), v.eta_day.unwrap_or(0), v.eta_hour.unwrap_or(0), v.eta_minute.unwrap_or(0)));
+    }
+    out.push_str(&format!(",\"count\":{},\"path_count\":{},\"last_signal\":{:.0}}}", v.count, v.path.len, now - v.last_signal));
 }
 
 fn esc(s: &str) -> String { s.replace('\\', "\\\\").replace('"', "\\\"") }
@@ -254,60 +471,30 @@ fn mmsi_country(mmsi: u32) -> String {
     let mid = (mmsi / 1000000) % 1000;
     match mid {
         201..=212 => "GR", 213..=214 => "TR", 215 => "MT", 216 => "CY", 218 => "DE",
-        219 => "DK", 220 => "DK", 224..=227 => "ES", 228..=229 => "FR", 230 => "FI",
-        231 => "FO", 232..=235 => "GB", 236 => "GI", 237 => "GR", 238 => "HR",
-        239 => "GR", 240 => "GR", 241 => "GR", 242 => "MA", 243 => "HU",
-        244..=246 => "NL", 247..=249 => "IT", 250 => "IE", 251 => "IS",
-        255 => "PT", 256 => "MT", 257 => "NO", 258 => "NO", 259 => "NO",
-        261 => "PL", 263 => "PT", 265..=266 => "SE", 267 => "CZ",
-        268 => "UA", 269 => "RU", 270 => "CZ", 271 => "TR", 272 => "UA",
-        273 => "RU", 274 => "IS", 275 => "LV", 276 => "EE", 277 => "LT",
-        278 => "SI", 279 => "RS", 301 => "AI", 303 => "US", 304 => "AG",
-        305 => "AG", 306 => "CW", 307 => "AW", 308 => "BS", 309 => "BS",
-        310 => "BM", 311 => "BS", 312 => "BZ", 314 => "BB", 316 => "CA",
-        319 => "KY", 321 => "CR", 323 => "CU", 325 => "DM", 327 => "DO",
-        329 => "GP", 330 => "GD", 332 => "GT", 334 => "HN", 336 => "HT",
-        338 => "US", 339 => "JM", 341 => "KN", 343 => "LC", 345 => "MX",
-        347 => "MQ", 348 => "MS", 350 => "NI", 351..=354 => "PA",
-        355..=357 => "PR", 358 => "PR", 361 => "PM", 362 => "TT",
-        364 => "TC", 366..=369 => "US", 370..=372 => "PA", 373 => "PA",
-        375 => "VC", 376 => "VC", 377 => "VC", 378 => "VG",
-        379 => "VI", 401 => "AF", 403 => "SA", 405 => "BD",
-        408 => "BH", 410 => "BT", 412..=413 => "CN", 414 => "CN",
-        416 => "TW", 417 => "LK", 419 => "IN", 422 => "IR",
-        423 => "AZ", 425 => "IQ", 428 => "IL", 431..=432 => "JP",
-        434 => "TM", 436 => "KZ", 437 => "UZ", 438 => "JO",
-        440..=441 => "KR", 443 => "PS", 445 => "KP", 447 => "KW",
-        450 => "LB", 451 => "KG", 453 => "MO", 455 => "MV",
-        457 => "MN", 459 => "NP", 461 => "OM", 463 => "PK",
-        466 => "QA", 468 => "SY", 470 => "AE", 472 => "TJ",
-        473 => "YE", 475 => "AF", 477 => "HK", 478 => "BA",
+        219..=220 => "DK", 224..=227 => "ES", 228..=229 => "FR", 230 => "FI",
+        231 => "FO", 232..=235 => "GB", 236 => "GI", 237..=241 => "GR", 242 => "MA",
+        243 => "HU", 244..=246 => "NL", 247..=249 => "IT", 250 => "IE", 251 => "IS",
+        255 => "PT", 256 => "MT", 257..=259 => "NO", 261 => "PL", 263 => "PT",
+        265..=266 => "SE", 267 => "CZ", 268 => "UA", 269 => "RU", 270 => "CZ",
+        271 => "TR", 272 => "UA", 273 => "RU", 274 => "IS", 275 => "LV",
+        276 => "EE", 277 => "LT", 278 => "SI", 279 => "RS",
+        301 => "AI", 303..=304 => "US", 305 => "AG", 306 => "CW", 307 => "AW",
+        308..=309 | 311 => "BS", 310 => "BM", 312 => "BZ", 314 => "BB",
+        316 => "CA", 319 => "KY", 338 | 366..=369 => "US",
+        345 => "MX", 351..=354 | 370..=373 => "PA",
+        401 => "AF", 403 => "SA", 405 => "BD", 410 => "BT",
+        412..=414 => "CN", 416 => "TW", 417 => "LK", 419 => "IN",
+        422 => "IR", 425 => "IQ", 428 => "IL", 431..=432 => "JP",
+        440..=441 => "KR", 445 => "KP", 447 => "KW", 450 => "LB",
+        457 => "MN", 461 => "OM", 463 => "PK", 466 => "QA",
+        468 => "SY", 470 => "AE", 477 => "HK",
         501 => "AQ", 503 => "AU", 506 => "MM", 508 => "BN",
-        510 => "FM", 511 => "PW", 512 => "NZ", 514 => "KH",
-        515 => "KH", 516 => "CX", 518 => "CK", 520 => "FJ",
-        523 => "CC", 525 => "ID", 529 => "KI", 531 => "LA",
-        533 => "MY", 536 => "MP", 538 => "MH", 540 => "NC",
-        542 => "NU", 544 => "NR", 546 => "PF", 548 => "PH",
-        553 => "PG", 555 => "PN", 557 => "SB", 559 => "AS",
-        561 => "WS", 563 => "SG", 564 => "SG", 565 => "SG",
-        566 => "SG", 567 => "TH", 570 => "TO", 572 => "TV",
-        574 => "VN", 576 => "VU", 577 => "VU", 578 => "WF",
-        601 => "ZA", 603 => "AO", 605 => "DZ", 607 => "TF",
-        608 => "IO", 609 => "BI", 610 => "BJ", 611 => "BW",
-        612 => "CF", 613 => "CM", 615 => "CG", 616 => "KM",
-        617 => "CV", 618 => "AQ", 619 => "CI", 620 => "KM",
-        621 => "DJ", 622 => "EG", 624 => "ET", 625 => "ER",
-        626 => "GA", 627 => "GH", 629 => "GM", 630 => "GW",
-        631 => "GQ", 632 => "GN", 633 => "BF", 634 => "KE",
-        635 => "AQ", 636 => "LR", 637 => "LR", 638 => "SS",
-        642 => "LY", 644 => "LS", 645 => "MU", 647 => "MG",
-        649 => "ML", 650 => "MZ", 654 => "MR", 655 => "MW",
-        656 => "NE", 657 => "NG", 659 => "NA", 660 => "RE",
-        661 => "RW", 662 => "SD", 663 => "SN", 664 => "SC",
-        665 => "SH", 666 => "SO", 667 => "SL", 668 => "ST",
-        669 => "SZ", 670 => "TD", 671 => "TG", 672 => "TN",
-        674 => "TZ", 675 => "UG", 676 => "CD", 677 => "TZ",
-        678 => "ZM", 679 => "ZW",
+        512 => "NZ", 514..=515 => "KH", 525 => "ID", 533 => "MY",
+        538 => "MH", 548 => "PH", 553 => "PG", 563..=566 => "SG",
+        567 => "TH", 574 => "VN", 576 => "VU",
+        601 => "ZA", 603 => "AO", 605 => "DZ", 622 => "EG",
+        624 => "ET", 636..=637 => "LR", 647 => "MG", 649 => "ML",
+        657 => "NG", 667 => "SL", 672 => "TN", 674 => "TZ",
         _ => "??",
     }.to_string()
 }

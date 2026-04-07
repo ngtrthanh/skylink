@@ -499,6 +499,10 @@ pub async fn serve(aircraft_store: Option<Arc<Store>>, vessel_store: Option<Arc<
             .route("/api/vessels.json", get(vessels_json))
             .route("/api/vessels.geojson", get(vessels_geojson))
             .route("/api/vessel", get(vessel_detail))
+            .route("/api/path.json", get(vessel_path_json))
+            .route("/api/path.geojson", get(vessel_path_geojson))
+            .route("/api/allpath.geojson", get(vessel_allpath_geojson))
+            .route("/api/ais_stats.json", get(ais_stats_json))
             .route("/ws/ais", get(crate::ws_ais::ws_handler))
             .with_state(store.clone());
         app = app.merge(vs_routes);
@@ -549,6 +553,37 @@ async fn vessel_detail(State(store): State<Arc<crate::ais::vessel::VesselStore>>
         }
         None => json_response("{\"error\":\"not found\"}".into()),
     }
+}
+
+async fn vessel_path_json(State(store): State<Arc<crate::ais::vessel::VesselStore>>, Query(params): Query<HashMap<String, String>>) -> Response {
+    let mmsi: u32 = match params.get("mmsi").and_then(|v| v.parse().ok()) {
+        Some(m) => m,
+        None => return json_response("{\"error\":\"missing mmsi\"}".into()),
+    };
+    match store.get_path_json(mmsi) {
+        Some(j) => json_response(j),
+        None => json_response("{\"error\":\"not found\"}".into()),
+    }
+}
+
+async fn vessel_path_geojson(State(store): State<Arc<crate::ais::vessel::VesselStore>>, Query(params): Query<HashMap<String, String>>) -> Response {
+    let mmsi: u32 = match params.get("mmsi").and_then(|v| v.parse().ok()) {
+        Some(m) => m,
+        None => return json_response("{\"error\":\"missing mmsi\"}".into()),
+    };
+    match store.get_path_geojson(mmsi) {
+        Some(j) => (StatusCode::OK, [(header::CONTENT_TYPE, "application/geo+json")], j).into_response(),
+        None => json_response("{\"error\":\"not found\"}".into()),
+    }
+}
+
+async fn vessel_allpath_geojson(State(store): State<Arc<crate::ais::vessel::VesselStore>>) -> Response {
+    let data = store.get_all_paths_geojson();
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/geo+json"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], data).into_response()
+}
+
+async fn ais_stats_json(State(store): State<Arc<crate::ais::vessel::VesselStore>>) -> Response {
+    json_response(store.stats.to_json())
 }
 
 fn combined_stats(ac: Option<Arc<Store>>, vs: Option<Arc<crate::ais::vessel::VesselStore>>) -> Response {

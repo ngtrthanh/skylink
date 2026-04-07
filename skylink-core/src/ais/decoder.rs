@@ -10,11 +10,16 @@ pub fn decode(bits: &[u8]) -> Option<VesselUpdate> {
 
     match msg_type {
         1 | 2 | 3 => decode_pos_a(bits, mmsi),
+        4 | 11 => decode_base_station(bits, mmsi),
         5 => decode_static_a(bits, mmsi),
+        6 | 7 | 8 => decode_addressed_binary(bits, mmsi, msg_type),
+        9 => decode_sar_aircraft(bits, mmsi),
+        14 => decode_safety_text(bits, mmsi),
         18 => decode_pos_b(bits, mmsi),
         19 => decode_pos_b_ext(bits, mmsi),
         21 => decode_aton(bits, mmsi),
         24 => decode_static_b(bits, mmsi),
+        27 => decode_long_range(bits, mmsi),
         _ => None,
     }
 }
@@ -161,4 +166,72 @@ fn decode_static_b(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
         }
         _ => None,
     }
+}
+
+// Type 4/11: Base station report
+fn decode_base_station(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
+    if b.len() * 8 < 168 { return None; }
+    let lon = get_int(b, 79, 28);
+    let lat = get_int(b, 107, 27);
+    Some(VesselUpdate {
+        mmsi, msg_type: get_uint(b, 0, 6) as u8,
+        lat: if lat == 0x3412140 { None } else { Some(lat as f32 / 600000.0) },
+        lon: if lon == 0x6791AC0 { None } else { Some(lon as f32 / 600000.0) },
+        shipclass: 3, // Base station
+        ..Default::default()
+    })
+}
+
+// Type 6/7/8: Addressed/binary messages — just record the MMSI and type
+fn decode_addressed_binary(b: &[u8], mmsi: u32, msg_type: u8) -> Option<VesselUpdate> {
+    Some(VesselUpdate { mmsi, msg_type, shipclass: 1, ..Default::default() })
+}
+
+// Type 9: SAR aircraft position
+fn decode_sar_aircraft(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
+    if b.len() * 8 < 168 { return None; }
+    let alt = get_uint(b, 38, 12);
+    let sog = get_uint(b, 50, 10);
+    let lon = get_int(b, 61, 28);
+    let lat = get_int(b, 89, 27);
+    let cog = get_uint(b, 116, 12);
+    Some(VesselUpdate {
+        mmsi, msg_type: 9,
+        lat: if lat == 0x3412140 { None } else { Some(lat as f32 / 600000.0) },
+        lon: if lon == 0x6791AC0 { None } else { Some(lon as f32 / 600000.0) },
+        speed: if sog == 1023 { None } else { Some(sog as f32) }, // knots, no /10 for type 9
+        cog: if cog == 3600 { None } else { Some(cog as f32 / 10.0) },
+        altitude: if alt == 4095 { None } else { Some(alt as u16) },
+        shipclass: 4, // SAR aircraft
+        ..Default::default()
+    })
+}
+
+// Type 14: Safety-related broadcast
+fn decode_safety_text(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
+    if b.len() * 8 < 40 { return None; }
+    let text_bits = b.len() * 8 - 40;
+    let text = if text_bits >= 6 { Some(get_string(b, 40, text_bits)) } else { None };
+    Some(VesselUpdate { mmsi, msg_type: 14, text, shipclass: 1, ..Default::default() })
+}
+
+// Type 27: Long-range AIS broadcast (satellite)
+fn decode_long_range(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
+    if b.len() * 8 < 96 { return None; }
+    let status = get_uint(b, 38, 4) as u8;
+    let sog = get_uint(b, 46, 6);
+    let lon = get_int(b, 44 + 18, 18); // different bit layout
+    let lat = get_int(b, 62 + 18, 17);
+    let cog = get_uint(b, 79 + 18, 9);
+    Some(VesselUpdate {
+        mmsi, msg_type: 27,
+        // Type 27 uses 1/10 degree resolution
+        lat: if lat == 0x1A838 { None } else { Some(lat as f32 / 10.0) },
+        lon: if lon == 0x35070 { None } else { Some(lon as f32 / 10.0) },
+        speed: Some(sog as f32),
+        cog: Some(cog as f32),
+        status: Some(status),
+        shipclass: 1,
+        ..Default::default()
+    })
 }
