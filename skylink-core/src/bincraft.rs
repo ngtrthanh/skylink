@@ -112,6 +112,14 @@ fn encode_aircraft(icao: u32, ac: &Aircraft, now_s: f64) -> [u8; 112] {
         for (i, b) in cs.as_bytes().iter().take(8).enumerate() { rec[78 + i] = *b; }
     }
 
+    // type designator (bytes 88-91) and registration (bytes 92-103)
+    if let Some(ref t) = ac.t {
+        for (i, b) in t.as_bytes().iter().take(4).enumerate() { rec[88 + i] = *b; }
+    }
+    if let Some(ref r) = ac.r {
+        for (i, b) in r.as_bytes().iter().take(12).enumerate() { rec[92 + i] = *b; }
+    }
+
     rec[104] = 1; // receiverCount
 
     if let Some(rssi) = ac.rssi {
