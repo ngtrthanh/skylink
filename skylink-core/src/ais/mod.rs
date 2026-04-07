@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use vessel::VesselStore;
 
 /// Connect to AIS-catcher NMEA TCP output and feed vessel store
-pub async fn ingest(store: Arc<VesselStore>, host: String) {
+pub async fn ingest(store: Arc<VesselStore>, host: String, nmea_tx: Option<crate::nmea_out::NmeaSender>) {
     loop {
         info!("ais: connecting to {host}");
         match TcpStream::connect(&host).await {
@@ -24,6 +24,10 @@ pub async fn ingest(store: Arc<VesselStore>, host: String) {
                     match reader.read_line(&mut line).await {
                         Ok(0) => { warn!("ais: connection closed"); break; }
                         Ok(_) => {
+                            // Forward raw NMEA to downstream consumers
+                            if let Some(ref tx) = nmea_tx {
+                                let _ = tx.send(line.trim().to_string());
+                            }
                             if let Some(bits) = collector.feed(&line) {
                                 if let Some(update) = decoder::decode(&bits) {
                                     store.update(update);

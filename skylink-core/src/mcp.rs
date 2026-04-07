@@ -43,6 +43,8 @@ pub async fn manifest() -> Response {
             {"name":"search_aircraft","description":"Search aircraft by callsign prefix, ICAO hex, or squawk","endpoint":"/mcp/search","method":"POST"},
             {"name":"get_trace","description":"Get flight path history for an aircraft","endpoint":"/mcp/trace","method":"POST"},
             {"name":"list_area","description":"List aircraft in a bounding box","endpoint":"/mcp/area","method":"POST"},
+            {"name":"search_vessel","description":"Search vessels by name, MMSI, ship type, or country","endpoint":"/mcp/vessel_search","method":"POST"},
+            {"name":"list_vessel_area","description":"List vessels in a bounding box","endpoint":"/mcp/vessel_area","method":"POST"},
             {"name":"get_stats","description":"Get aggregator statistics","endpoint":"/mcp/stats","method":"GET"},
         ]
     });

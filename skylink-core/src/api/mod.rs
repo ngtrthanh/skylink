@@ -504,8 +504,22 @@ pub async fn serve(aircraft_store: Option<Arc<Store>>, vessel_store: Option<Arc<
             .route("/api/allpath.geojson", get(vessel_allpath_geojson))
             .route("/api/ais_stats.json", get(ais_stats_json))
             .route("/ws/ais", get(crate::ws_ais::ws_handler))
+            .route("/mcp/vessel_search", axum::routing::post(crate::mcp_vessel::vessel_search))
+            .route("/mcp/vessel_area", axum::routing::post(crate::mcp_vessel::vessel_area))
             .with_state(store.clone());
         app = app.merge(vs_routes);
+    }
+
+    // Unified WS (both aircraft + vessels in one connection)
+    if aircraft_store.is_some() || vessel_store.is_some() {
+        let unified = Arc::new(crate::ws_unified::UnifiedState {
+            aircraft: aircraft_store.clone(),
+            vessels: vessel_store.clone(),
+        });
+        let unified_route = Router::new()
+            .route("/ws/unified", get(crate::ws_unified::ws_handler))
+            .with_state(unified);
+        app = app.merge(unified_route);
     }
 
     // Stats endpoint (works with whatever is enabled)

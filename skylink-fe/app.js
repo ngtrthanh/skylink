@@ -5,6 +5,19 @@ let ws = null, wsAis = null, selected = null, spriteLoaded = false;
 
 const map = initMap({ containerId: 'maplibreMap', center: [20, 30], zoom: 3 });
 
+let showAircraft = true, showVessels = true;
+function toggleLayer(which) {
+  if (which === 'ac') {
+    showAircraft = !showAircraft;
+    document.getElementById('btn-ac').classList.toggle('on', showAircraft);
+    ['ac-dots','ac-icons'].forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', showAircraft ? 'visible' : 'none'); });
+  } else {
+    showVessels = !showVessels;
+    document.getElementById('btn-vs').classList.toggle('on', showVessels);
+    if (map.getLayer('vessel-dots')) map.setLayoutProperty('vessel-dots', 'visibility', showVessels ? 'visible' : 'none');
+  }
+}
+
 function loadSprite(cb) {
   const dpr = window.devicePixelRatio >= 2 ? '@2x' : '';
   const img = new Image();
