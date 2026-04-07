@@ -8,6 +8,7 @@ mod feed;
 mod pb;
 mod compact;
 mod ws;
+mod mcp;
 
 use std::sync::Arc;
 use tracing::info;
@@ -53,7 +54,7 @@ async fn main() {
     let ch = channels.clone();
     tokio::spawn(async move { beast::serve_ingest(s, ch, ingest_port).await; });
 
-    // HTTP API
+    // HTTP API (includes MCP endpoints)
     api::serve(store, api_port).await;
 }
 

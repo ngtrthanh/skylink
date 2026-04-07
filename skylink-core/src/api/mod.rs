@@ -428,7 +428,13 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/ws", get(crate::ws::ws_handler))
         // Stats
         .route("/stats", get(stats))
-        // Globe tiles fallback
+        // MCP tool endpoints
+        .route("/.well-known/mcp.json", get(crate::mcp::manifest))
+        .route("/mcp/search", axum::routing::post(crate::mcp::search))
+        .route("/mcp/trace", axum::routing::post(crate::mcp::trace))
+        .route("/mcp/area", axum::routing::post(crate::mcp::area))
+        .route("/mcp/stats", get(crate::mcp::stats))
+        // Globe fallback
         .route("/data/{*path}", get(globe_fallback))
         .layer(CorsLayer::permissive())
         .with_state(store);
