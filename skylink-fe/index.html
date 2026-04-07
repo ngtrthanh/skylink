@@ -22,72 +22,165 @@
 .projection-toggle-container{position:absolute!important;top:42px;right:8px;z-index:10}
 .map-style-select{background:#111;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 6px;font-size:11px;cursor:pointer}
 .projection-toggle{background:#111;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:11px;cursor:pointer;width:100%}
-/* MapManager controls position override — top right */
-.maplibregl-ctrl-top-right{top:8px;right:8px}
 </style>
 </head>
 <body>
 <div id="maplibreMap"></div>
 <div id="hud">—</div>
-<div id="panel"><span class="x" onclick="this.parentElement.style.display='none'">✕</span><h3 id="ph">—</h3><div id="pb"></div></div>
+<div id="panel"><span class="x" onclick="closePanel()">✕</span><h3 id="ph">—</h3><div id="pb"></div></div>
 
 <script src="/maplibre-gl.js"></script>
 <script src="/mapManager.js"></script>
 <script>
-// Init map via mapManager (style switcher, projection, controls)
-const map = initMap({ containerId: 'maplibreMap', center: [20, 30], zoom: 3 });
+const API = location.origin;
+const WS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+let ws = null, selected = null;
 
-let busy = false;
+// Category → icon shape mapping
+const CAT_ICON = {
+  'A1':'cessna','A2':'twin_small','A3':'jet_swept','A4':'jet_swept','A5':'airliner',
+  'A6':'hi_perf','A7':'helicopter','B1':'cessna','B2':'balloon','B4':'generic',
+  'B6':'uav','C1':'generic','C3':'generic',
+};
+
+const map = initMap({ containerId: 'maplibreMap', center: [20, 30], zoom: 3 });
 
 function addLayers() {
   if (map.getSource('ac')) return;
-  map.addSource('ac', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-  map.addLayer({ id: 'dots', type: 'circle', source: 'ac', paint: {
-    'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 1.5, 6, 3, 10, 5, 14, 7],
-    'circle-color': ['interpolate', ['linear'], ['coalesce', ['get', 'alt_baro'], 0],
-      0, '#2ecc71', 5000, '#3498db', 15000, '#f1c40f', 30000, '#e67e22', 42000, '#e74c3c'],
-    'circle-opacity': 0.85 }});
-  map.addLayer({ id: 'lbl', type: 'symbol', source: 'ac', minzoom: 8, layout: {
-    'text-field': ['coalesce', ['get', 'flight'], ['get', 'hex']],
-    'text-size': 9, 'text-offset': [0, 1], 'text-allow-overlap': false },
-    paint: { 'text-color': '#888', 'text-halo-color': '#000', 'text-halo-width': 1 }});
-  map.on('click', 'dots', e => {
+
+  // Load sprite icons
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    fetch('/sprite.json').then(r => r.json()).then(meta => {
+      // Extract each icon from sprite sheet
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      for (const [name, m] of Object.entries(meta)) {
+        const data = c.getContext('2d').getImageData(m.x, m.y, m.width, m.height);
+        if (!map.hasImage(name)) map.addImage(name, {width:m.width, height:m.height, data:data.data}, {sdf:true});
+      }
+    });
+  };
+  img.src = '/sprite.png';
+
+  map.addSource('ac', { type:'geojson', data:{type:'FeatureCollection',features:[]} });
+  map.addSource('trace', { type:'geojson', data:{type:'FeatureCollection',features:[]} });
+
+  // Trace line
+  map.addLayer({ id:'trace-line', type:'line', source:'trace', paint:{
+    'line-color':['interpolate',['linear'],['get','alt'],
+      0,'#2ecc71',15000,'#f1c40f',30000,'#e67e22',42000,'#e74c3c'],
+    'line-width':2, 'line-opacity':0.7 }});
+
+  // Aircraft icons
+  map.addLayer({ id:'ac-icons', type:'symbol', source:'ac', layout:{
+    'icon-image':['coalesce',
+      ['match',['get','category'],
+        'A1','cessna','A2','twin_small','A3','jet_swept','A4','jet_swept',
+        'A5','airliner','A6','hi_perf','A7','helicopter',
+        'B2','balloon','B6','uav','generic'],
+      'generic'],
+    'icon-size':['interpolate',['linear'],['zoom'], 2,0.4, 6,0.6, 10,0.85, 14,1.1],
+    'icon-rotate':['coalesce',['get','track'],0],
+    'icon-rotation-alignment':'map',
+    'icon-allow-overlap':true,
+    'icon-ignore-placement':true,
+    'icon-padding':0,
+    'text-field':['step',['zoom'],'', 9,['coalesce',['get','flight'],['get','hex']]],
+    'text-size':9, 'text-offset':[0,1.3], 'text-optional':true,
+  }, paint:{
+    'icon-color':['interpolate',['linear'],['coalesce',['get','alt_baro'],0],
+      0,'#2ecc71',5000,'#3498db',15000,'#f1c40f',30000,'#e67e22',42000,'#e74c3c'],
+    'text-color':'#888','text-halo-color':'#000','text-halo-width':1,
+  }});
+
+  // Click → detail + trace
+  map.on('click','ac-icons', e => {
     const p = e.features[0].properties;
+    selected = p.hex;
     document.getElementById('ph').textContent = p.flight || p.hex;
     document.getElementById('pb').innerHTML = [
-      ['ICAO', p.hex], ['Alt', p.alt_baro ? p.alt_baro + ' ft' : '—'],
-      ['GS', p.gs ? p.gs + ' kt' : '—'], ['Trk', p.track ? p.track + '°' : '—'],
-      ['Sqk', p.squawk || '—'], ['Cat', p.category || '—'],
-    ].map(([l, v]) => `<div class="r"><span class="l">${l}</span><span>${v}</span></div>`).join('');
-    document.getElementById('panel').style.display = 'block';
+      ['ICAO',p.hex],['Alt',p.alt_baro?p.alt_baro+' ft':'—'],
+      ['GS',p.gs?Math.round(p.gs)+' kt':'—'],['Trk',p.track?Math.round(p.track)+'°':'—'],
+      ['Sqk',p.squawk||'—'],['Cat',p.category||'—'],
+      ['IAS',p.ias?p.ias+' kt':'—'],['Mach',p.mach||'—'],
+    ].map(([l,v])=>`<div class="r"><span class="l">${l}</span><span>${v}</span></div>`).join('');
+    document.getElementById('panel').style.display='block';
+    loadTrace(p.hex);
   });
-  map.on('mouseenter', 'dots', () => map.getCanvas().style.cursor = 'pointer');
-  map.on('mouseleave', 'dots', () => map.getCanvas().style.cursor = '');
+  map.on('mouseenter','ac-icons',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','ac-icons',()=>map.getCanvas().style.cursor='');
+  map.on('click', e => {
+    if (!map.queryRenderedFeatures(e.point,{layers:['ac-icons']}).length) closePanel();
+  });
 }
 
-// Re-add layers on every style change (mapManager switches styles)
-map.on('style.load', addLayers);
-map.on('load', () => { addLayers(); tick(); setInterval(tick, 2000); });
+function closePanel() {
+  document.getElementById('panel').style.display='none';
+  selected = null;
+  if (map.getSource('trace')) map.getSource('trace').setData({type:'FeatureCollection',features:[]});
+}
 
-async function tick() {
-  if (busy) return;
-  busy = true;
+// Step 5: Trace rendering
+async function loadTrace(hex) {
   try {
-    const b = map.getBounds(), z = map.getZoom(), p = 3 / (z + 1);
-    const box = [
-      Math.max(-90, b.getSouth() - p).toFixed(1),
-      Math.min(90, b.getNorth() + p).toFixed(1),
-      Math.max(-180, b.getWest() - p).toFixed(1),
-      Math.min(180, b.getEast() + p).toFixed(1)].join(',');
-    const r = await fetch('/re-api/?geojson&box=' + box);
-    if (r.ok) {
-      const d = await r.json();
-      if (map.getSource('ac')) map.getSource('ac').setData(d);
-      document.getElementById('hud').textContent = d.features.length + ' ac';
+    const r = await fetch(`/data/traces/${hex}/trace_recent.json`);
+    if (!r.ok) return;
+    const t = await r.json();
+    if (!t.trace || !t.trace.length) return;
+    // trace format: [[timestamp, lat, lon, alt, gs, track, ...], ...]
+    const segments = [];
+    for (let i = 1; i < t.trace.length; i++) {
+      const p = t.trace[i-1], c = t.trace[i];
+      if (p[1] && p[2] && c[1] && c[2]) {
+        segments.push({
+          type:'Feature',
+          properties:{ alt: (c[3]||0) },
+          geometry:{ type:'LineString', coordinates:[[p[2],p[1]],[c[2],c[1]]] }
+        });
+      }
     }
-  } catch (e) {}
-  busy = false;
+    if (map.getSource('trace')) {
+      map.getSource('trace').setData({type:'FeatureCollection',features:segments});
+    }
+  } catch(e) { console.warn('trace:', e); }
 }
+
+// Step 4: WebSocket with bbox
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => sendBbox();
+  ws.onmessage = e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (map.getSource('ac')) map.getSource('ac').setData(data);
+      document.getElementById('hud').textContent = data.features.length + ' ac';
+    } catch(err) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 2000);
+  ws.onerror = () => ws.close();
+}
+
+function sendBbox() {
+  if (!ws || ws.readyState !== 1) return;
+  const b = map.getBounds(), z = map.getZoom(), p = 3/(z+1);
+  const s = Math.max(-90,b.getSouth()-p).toFixed(1);
+  const n = Math.min(90,b.getNorth()+p).toFixed(1);
+  const w = Math.max(-180,b.getWest()-p).toFixed(1);
+  const e = Math.min(180,b.getEast()+p).toFixed(1);
+  ws.send(`box:${s},${n},${w},${e}`);
+}
+
+// Re-add layers on style change
+map.on('style.load', addLayers);
+map.on('load', () => {
+  addLayers();
+  connectWS();
+  // Update bbox on pan/zoom
+  map.on('moveend', sendBbox);
+});
 </script>
 </body>
 </html>

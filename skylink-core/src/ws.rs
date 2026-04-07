@@ -1,5 +1,6 @@
-/// WebSocket endpoint — push compact binary snapshots every 1s
-/// Clients send bbox as text: "box:south,north,west,east" or "all"
+/// WebSocket endpoint — push snapshots every 1s
+/// Client sends: "box:S,N,W,E" for bbox, "all" for everything
+/// Format is GeoJSON text (for FE) — lightweight for MapLibre setData()
 
 use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -9,7 +10,7 @@ use tokio::time::{interval, Duration};
 use tracing::info;
 
 use crate::aircraft::Store;
-use crate::compact;
+use crate::geojson;
 
 pub async fn ws_handler(ws: WebSocketUpgrade, State(store): State<Arc<Store>>) -> Response {
     ws.on_upgrade(move |socket| handle_ws(socket, store))
@@ -23,14 +24,12 @@ async fn handle_ws(mut socket: WebSocket, store: Arc<Store>) {
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let compressed = match bbox {
-                    Some((s, n, w, e)) => {
-                        let raw = compact::build_filtered(&store, s, n, w, e);
-                        zstd::encode_all(raw.as_slice(), 3).unwrap_or(raw)
-                    }
-                    None => store.compact_zstd_cache.read().to_vec(),
+                let data = match bbox {
+                    Some((s, n, w, e)) => geojson::build_filtered(&store, s, n, w, e),
+                    None => store.geojson_cache.read().to_vec(),
                 };
-                if socket.send(Message::Binary(compressed.into())).await.is_err() {
+                let text = unsafe { String::from_utf8_unchecked(data) };
+                if socket.send(Message::Text(text.into())).await.is_err() {
                     break;
                 }
             }
