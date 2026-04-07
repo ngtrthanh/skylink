@@ -5,11 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="Live aircraft tracker — real-time ADS-B flight tracking worldwide">
 <title>Skylink</title>
-<link rel="preconnect" href="https://a.basemaps.cartocdn.com" crossorigin>
-<link href="/maplibre-gl.css" rel="stylesheet">
 <style>
-*{margin:0;padding:0}body,html{height:100%;background:#0a0a0f;overflow:hidden}
-#maplibreMap{width:100%;height:100%}
+*{margin:0;padding:0;box-sizing:border-box}
+body,html{height:100%;background:#0a0a0f;overflow:hidden;color:#ccc;font-family:system-ui,-apple-system,sans-serif}
+#maplibreMap{width:100%;height:100%;position:absolute;top:0;left:0}
 #hud{position:fixed;top:8px;left:8px;color:#4fc3f7;font:700 12px/1 monospace;z-index:9;
   background:rgba(0,0,0,0.5);padding:5px 8px;border-radius:4px;pointer-events:none}
 #panel{position:fixed;top:76px;right:8px;width:240px;background:rgba(5,5,15,0.9);backdrop-filter:blur(10px);
@@ -25,139 +24,29 @@
 </style>
 </head>
 <body>
-<div id="maplibreMap"></div>
-<div id="hud">—</div>
-<div id="panel"><span class="x" onclick="closePanel()">✕</span><h3 id="ph">—</h3><div id="pb"></div></div>
-
-<script src="/maplibre-gl.js"></script>
-<script src="/mapManager.js"></script>
-<script src="/iconMap.js"></script>
+<div id="maplibreMap" role="application" aria-label="Aircraft tracking map"></div>
+<div id="hud" aria-live="polite">Loading map…</div>
+<div id="panel" role="dialog" aria-label="Aircraft details"><span class="x" onclick="closePanel()" role="button" aria-label="Close" tabindex="0">✕</span><h3 id="ph">—</h3><div id="pb"></div></div>
+<link rel="stylesheet" href="/maplibre-gl.css" media="all">
 <script>
-const WS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
-let ws = null, selected = null;
+// Configure API endpoint (set before loading app.js)
+window.SKYLINK_API = 'https://skylink-api.hpradar.com';
 
-const map = initMap({ containerId: 'maplibreMap', center: [20, 30], zoom: 3 });
-
-function addLayers() {
-  if (map.getSource('ac')) return;
-
-  // Load all 81 SDF icons from sprite sheet
-  const dpr = window.devicePixelRatio >= 2 ? '@2x' : '';
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = () => {
-    fetch('/sprite' + dpr + '.json').then(r => r.json()).then(meta => {
-      const c = document.createElement('canvas');
-      c.width = img.width; c.height = img.height;
-      c.getContext('2d').drawImage(img, 0, 0);
-      for (const [name, m] of Object.entries(meta)) {
-        const data = c.getContext('2d').getImageData(m.x, m.y, m.width, m.height);
-        if (!map.hasImage(name))
-          map.addImage(name, {width:m.width, height:m.height, data:data.data}, {sdf:true, pixelRatio: m.pixelRatio});
-      }
-    });
-  };
-  img.src = '/sprite' + dpr + '.png';
-
-  map.addSource('ac', { type:'geojson', data:{type:'FeatureCollection',features:[]} });
-  map.addSource('trace', { type:'geojson', data:{type:'FeatureCollection',features:[]} });
-
-  // Trace line — altitude gradient
-  map.addLayer({ id:'trace-line', type:'line', source:'trace', paint:{
-    'line-color':['interpolate',['linear'],['get','alt'],
-      0,'#2ecc71',15000,'#f1c40f',30000,'#e67e22',42000,'#e74c3c'],
-    'line-width':2, 'line-opacity':0.7 }});
-
-  // Aircraft icons — 81 shapes, resolved per feature
-  map.addLayer({ id:'ac-icons', type:'symbol', source:'ac', layout:{
-    'icon-image':['coalesce',['get','_icon'],'unknown'],
-    'icon-size':['interpolate',['linear'],['zoom'], 2,0.35, 5,0.5, 8,0.65, 12,0.85, 15,1.0],
-    'icon-rotate':['coalesce',['get','track'],0],
-    'icon-rotation-alignment':'map',
-    'icon-allow-overlap':true,
-    'icon-ignore-placement':true,
-    'icon-padding':0,
-  }, paint:{
-    'icon-color':['interpolate',['linear'],['coalesce',['get','alt_baro'],0],
-      0,'#2ecc71',5000,'#3498db',15000,'#f1c40f',30000,'#e67e22',42000,'#e74c3c'],
-  }});
-
-  // Click → detail + trace
-  map.on('click','ac-icons', e => {
-    const p = e.features[0].properties;
-    selected = p.hex;
-    document.getElementById('ph').textContent = p.flight || p.hex;
-    document.getElementById('pb').innerHTML = [
-      ['ICAO',p.hex],['Alt',p.alt_baro?p.alt_baro+' ft':'—'],
-      ['GS',p.gs?Math.round(p.gs)+' kt':'—'],['Trk',p.track?Math.round(p.track)+'°':'—'],
-      ['Sqk',p.squawk||'—'],['Cat',p.category||'—'],
-      ['IAS',p.ias?p.ias+' kt':'—'],['Mach',p.mach||'—'],
-    ].map(([l,v])=>`<div class="r"><span class="l">${l}</span><span>${v}</span></div>`).join('');
-    document.getElementById('panel').style.display='block';
-    loadTrace(p.hex);
-  });
-  map.on('mouseenter','ac-icons',()=>map.getCanvas().style.cursor='pointer');
-  map.on('mouseleave','ac-icons',()=>map.getCanvas().style.cursor='');
-  map.on('click', e => {
-    if (!map.queryRenderedFeatures(e.point,{layers:['ac-icons']}).length) closePanel();
-  });
-}
-
-function closePanel() {
-  document.getElementById('panel').style.display='none';
-  selected = null;
-  if (map.getSource('trace')) map.getSource('trace').setData({type:'FeatureCollection',features:[]});
-}
-
-async function loadTrace(hex) {
-  try {
-    const r = await fetch('/data/traces/'+hex+'/trace_recent.json');
-    if (!r.ok) return;
-    const t = await r.json();
-    if (!t.trace || !t.trace.length) return;
-    const segments = [];
-    for (let i = 1; i < t.trace.length; i++) {
-      const p = t.trace[i-1], c = t.trace[i];
-      if (p[1] && p[2] && c[1] && c[2]) {
-        segments.push({type:'Feature',properties:{alt:c[3]||0},
-          geometry:{type:'LineString',coordinates:[[p[2],p[1]],[c[2],c[1]]]}});
-      }
+// Lazy-load MapLibre after first paint
+function loadApp(){
+  var s=document.createElement('script');s.src='/maplibre-gl.js';
+  s.onload=function(){
+    var scripts=['/mapManager.js','/fzstd.js','/bincraft.js','/iconMap.js','/app.js'];
+    function loadNext(i){
+      if(i>=scripts.length)return;
+      var s2=document.createElement('script');s2.src=scripts[i];
+      s2.onload=function(){loadNext(i+1)};document.head.appendChild(s2);
     }
-    if (map.getSource('trace'))
-      map.getSource('trace').setData({type:'FeatureCollection',features:segments});
-  } catch(e) {}
+    loadNext(0);
+  };document.head.appendChild(s);
 }
-
-function connectWS() {
-  ws = new WebSocket(WS_URL);
-  ws.onopen = () => sendBbox();
-  ws.onmessage = e => {
-    try {
-      const data = JSON.parse(e.data);
-      // Resolve icon shape for each feature
-      for (const f of data.features) {
-        f.properties._icon = resolveIcon(f.properties);
-      }
-      if (map.getSource('ac')) map.getSource('ac').setData(data);
-      document.getElementById('hud').textContent = data.features.length + ' ac';
-    } catch(err) {}
-  };
-  ws.onclose = () => setTimeout(connectWS, 2000);
-  ws.onerror = () => ws.close();
-}
-
-function sendBbox() {
-  if (!ws || ws.readyState !== 1) return;
-  const b = map.getBounds(), z = map.getZoom(), p = 3/(z+1);
-  ws.send('box:'+[
-    Math.max(-90,b.getSouth()-p).toFixed(1),
-    Math.min(90,b.getNorth()+p).toFixed(1),
-    Math.max(-180,b.getWest()-p).toFixed(1),
-    Math.min(180,b.getEast()+p).toFixed(1)].join(','));
-}
-
-map.on('style.load', addLayers);
-map.on('load', () => { addLayers(); connectWS(); map.on('moveend', sendBbox); });
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',loadApp);
+else loadApp();
 </script>
 </body>
 </html>
