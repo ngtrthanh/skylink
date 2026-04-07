@@ -181,12 +181,14 @@ async fn re_api(State(store): State<Arc<Store>>, Query(params): Query<HashMap<St
     let format = if params.contains_key("compact") { "compact" }
         else if params.contains_key("binCraft") { "binCraft" }
         else if params.contains_key("pb") { "pb" }
+        else if params.contains_key("geojson") { "geojson" }
         else { "json" };
 
     let raw = encode_filtered(&filtered, format);
     serve_binary(raw, use_zstd, match format {
         "pb" => "application/x-protobuf",
         "json" => "application/json",
+        "geojson" => "application/geo+json",
         _ => "application/octet-stream",
     })
 }
@@ -224,6 +226,22 @@ fn encode_filtered(aircraft: &[(u32, crate::aircraft::Aircraft)], format: &str) 
             for (i, (_, ac)) in aircraft.iter().enumerate() {
                 if i > 0 { buf.push(b','); }
                 buf.extend_from_slice(&serde_json::to_vec(ac).unwrap_or_default());
+            }
+            buf.extend_from_slice(b"]}");
+            buf
+        }
+        "geojson" => {
+            let mut buf = Vec::with_capacity(aircraft.len() * 300);
+            buf.extend_from_slice(b"{\"type\":\"FeatureCollection\",\"features\":[");
+            for (i, (_, ac)) in aircraft.iter().enumerate() {
+                if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
+                    if i > 0 { buf.push(b','); }
+                    buf.extend_from_slice(b"{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[");
+                    buf.extend_from_slice(format!("{:.6},{:.6}", lon, lat).as_bytes());
+                    buf.extend_from_slice(b"]},\"properties\":");
+                    buf.extend_from_slice(&serde_json::to_vec(ac).unwrap_or_default());
+                    buf.push(b'}');
+                }
             }
             buf.extend_from_slice(b"]}");
             buf
