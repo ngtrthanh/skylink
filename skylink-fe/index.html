@@ -36,7 +36,7 @@ window.SKYLINK_API = 'https://skylink-api.hpradar.com';
 function loadApp(){
   var s=document.createElement('script');s.src='/maplibre-gl.js';
   s.onload=function(){
-    var scripts=['/mapManager.js','/fzstd.js','/bincraft.js','/iconMap.js','/app.js'];
+    var scripts=['/mapManager.js','/fzstd.js','/bincraft.js','/iconMap.js','/binvessel.js','/vesselIconMap.js','/app.js'];
     function loadNext(i){
       if(i>=scripts.length)return;
       var s2=document.createElement('script');s2.src=scripts[i];

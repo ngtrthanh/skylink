@@ -1,4 +1,4 @@
-/// WebSocket endpoint for vessel data — push GeoJSON every 1s
+/// WebSocket endpoint for vessel data — push binVessel zstd binary every 1s
 use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -6,6 +6,7 @@ use axum::response::Response;
 use tokio::time::{interval, Duration};
 use tracing::info;
 use crate::ais::vessel::VesselStore;
+use crate::binvessel;
 
 pub async fn ws_handler(ws: WebSocketUpgrade, State(store): State<Arc<VesselStore>>) -> Response {
     ws.on_upgrade(move |socket| handle_ws(socket, store))
@@ -20,11 +21,14 @@ async fn handle_ws(mut socket: WebSocket, store: Arc<VesselStore>) {
         tokio::select! {
             _ = tick.tick() => {
                 let data = match bbox {
-                    Some((s, n, w, e)) => store.build_geojson_filtered(s, n, w, e),
-                    None => store.geojson_cache.read().to_vec(),
+                    Some((s, n, w, e)) => {
+                        let cache = store.binvessel_cache.read().clone();
+                        let raw = binvessel::build_filtered_from_cache(&cache, s, n, w, e);
+                        zstd::encode_all(raw.as_slice(), 3).unwrap_or(raw)
+                    }
+                    None => store.binvessel_zstd_cache.read().to_vec(),
                 };
-                let compressed = zstd::encode_all(data.as_slice(), 3).unwrap_or(data);
-                if socket.send(Message::Binary(compressed.into())).await.is_err() {
+                if socket.send(Message::Binary(data.into())).await.is_err() {
                     break;
                 }
             }

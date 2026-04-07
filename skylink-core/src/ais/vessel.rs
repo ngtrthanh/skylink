@@ -266,6 +266,8 @@ pub struct VesselStore {
     pub stats: AisStats,
     pub json_cache: parking_lot::RwLock<bytes::Bytes>,
     pub geojson_cache: parking_lot::RwLock<bytes::Bytes>,
+    pub binvessel_cache: parking_lot::RwLock<bytes::Bytes>,
+    pub binvessel_zstd_cache: parking_lot::RwLock<bytes::Bytes>,
 }
 
 impl VesselStore {
@@ -276,6 +278,8 @@ impl VesselStore {
             stats: AisStats::new(),
             json_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
             geojson_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
+            binvessel_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
+            binvessel_zstd_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
         }
     }
 
@@ -285,9 +289,13 @@ impl VesselStore {
         self.map.entry(u.mmsi).or_insert_with(|| Vessel::new(u.mmsi)).apply(&u);
     }
 
-    pub fn rebuild_caches(&self) {
+    pub fn rebuild_caches(&self, store_arc: &Arc<VesselStore>) {
         *self.json_cache.write() = bytes::Bytes::from(self.build_json());
         *self.geojson_cache.write() = bytes::Bytes::from(self.build_geojson());
+        let bin = crate::binvessel::build(store_arc);
+        let zstd = zstd_compress(&bin);
+        *self.binvessel_cache.write() = bytes::Bytes::from(bin);
+        *self.binvessel_zstd_cache.write() = bytes::Bytes::from(zstd);
     }
 
     fn build_json(&self) -> Vec<u8> {
@@ -410,7 +418,17 @@ pub async fn reaper(store: Arc<VesselStore>) {
 /// Cache rebuild loop (1s)
 pub async fn cache_loop(store: Arc<VesselStore>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-    loop { interval.tick().await; store.rebuild_caches(); }
+    loop { interval.tick().await; store.rebuild_caches(&store); }
+}
+
+fn zstd_compress(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut out = Vec::with_capacity(data.len() / 2);
+    let mut enc = zstd::Encoder::new(&mut out, 3).unwrap();
+    enc.set_pledged_src_size(Some(data.len() as u64)).ok();
+    enc.write_all(data).unwrap();
+    enc.finish().unwrap();
+    out
 }
 
 // --- JSON helpers ---

@@ -14,6 +14,7 @@ mod geojson;
 mod config;
 mod ais;
 mod ws_ais;
+mod binvessel;
 
 use std::sync::Arc;
 use tracing::info;

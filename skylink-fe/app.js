@@ -1,6 +1,7 @@
 const API_BASE = window.SKYLINK_API || '';
 const WS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + (window.SKYLINK_API ? new URL(API_BASE).host : location.host) + '/ws';
-let ws = null, selected = null, spriteLoaded = false;
+const WS_AIS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + (window.SKYLINK_API ? new URL(API_BASE).host : location.host) + '/ws/ais';
+let ws = null, wsAis = null, selected = null, spriteLoaded = false;
 
 const map = initMap({ containerId: 'maplibreMap', center: [20, 30], zoom: 3 });
 
@@ -29,12 +30,31 @@ function addLayers() {
   if (map.getSource('ac')) return;
 
   map.addSource('ac', { type:'geojson', data:{type:'FeatureCollection',features:[]} });
+  map.addSource('vessel', { type:'geojson', data:{type:'FeatureCollection',features:[]} });
   map.addSource('trace', { type:'geojson', data:{type:'FeatureCollection',features:[]} });
 
   map.addLayer({ id:'trace-line', type:'line', source:'trace', paint:{
     'line-color':['interpolate',['linear'],['get','alt'],
       0,'#2ecc71',15000,'#f1c40f',30000,'#e67e22',42000,'#e74c3c'],
     'line-width':2, 'line-opacity':0.7 }});
+
+  // Vessel layer — colored by ship type
+  map.addLayer({ id:'vessel-dots', type:'circle', source:'vessel', paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'], 2,2, 6,3.5, 10,5, 14,7],
+    'circle-color':['match',['get','shiptype'],
+      30,'#FF9800', // fishing=orange
+      36,'#9C27B0', // sailing=purple
+      52,'#795548', // tug=brown
+      ['interpolate',['linear'],['get','shiptype'],
+        0,'#9E9E9E', 59,'#9E9E9E', 60,'#2196F3', 69,'#2196F3', // passenger=blue
+        70,'#4CAF50', 79,'#4CAF50', // cargo=green
+        80,'#F44336', 89,'#F44336', // tanker=red
+        90,'#9E9E9E']],
+    'circle-opacity':0.85,
+    'circle-stroke-width':1,
+    'circle-stroke-color':'#000',
+    'circle-stroke-opacity':0.3,
+  }});
 
   map.addLayer({ id:'ac-dots', type:'circle', source:'ac', paint:{
     'circle-radius':['interpolate',['linear'],['zoom'], 2,1.5, 6,3, 10,5, 14,7],
@@ -82,8 +102,28 @@ function addLayers() {
   map.on('click','ac-dots', clickHandler);
   map.on('mouseenter','ac-dots',()=>map.getCanvas().style.cursor='pointer');
   map.on('mouseleave','ac-dots',()=>map.getCanvas().style.cursor='');
+
+  // Vessel click
+  const vesselClickHandler = e => {
+    const p = e.features[0].properties;
+    selected = 'v:' + p.mmsi;
+    document.getElementById('ph').textContent = p.shipname || 'MMSI ' + p.mmsi;
+    document.getElementById('pb').innerHTML = [
+      ['MMSI',p.mmsi],['Name',p.shipname||'—'],['Call',p.callsign||'—'],
+      ['Type',p.shiptype + ' (' + (resolveVesselIcon(p)) + ')'],
+      ['Speed',p.speed!=null?p.speed.toFixed(1)+' kt':'—'],
+      ['COG',p.cog!=null?p.cog.toFixed(1)+'°':'—'],
+      ['Hdg',p.heading!=null?p.heading+'°':'—'],
+      ['IMO',p.imo||'—'],['Status',p.status!=null?p.status:'—'],
+    ].map(([l,v])=>`<div class="r"><span class="l">${l}</span><span>${v}</span></div>`).join('');
+    document.getElementById('panel').style.display='block';
+  };
+  map.on('click','vessel-dots', vesselClickHandler);
+  map.on('mouseenter','vessel-dots',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','vessel-dots',()=>map.getCanvas().style.cursor='');
+
   map.on('click', e => {
-    const layers = map.getLayer('ac-icons') ? ['ac-icons','ac-dots'] : ['ac-dots'];
+    const layers = map.getLayer('ac-icons') ? ['ac-icons','ac-dots','vessel-dots'] : ['ac-dots','vessel-dots'];
     if (!map.queryRenderedFeatures(e.point,{layers}).length) closePanel();
   });
 }
@@ -136,12 +176,31 @@ function connectWS() {
 function sendBbox() {
   if (!ws || ws.readyState !== 1) return;
   const b = map.getBounds(), z = map.getZoom(), p = 3/(z+1);
-  ws.send('box:'+[
+  const box = 'box:'+[
     Math.max(-90,b.getSouth()-p).toFixed(1),
     Math.min(90,b.getNorth()+p).toFixed(1),
     Math.max(-180,b.getWest()-p).toFixed(1),
-    Math.min(180,b.getEast()+p).toFixed(1)].join(','));
+    Math.min(180,b.getEast()+p).toFixed(1)].join(',');
+  ws.send(box);
+  if (wsAis && wsAis.readyState === 1) wsAis.send(box);
+}
+
+function connectVesselWS() {
+  wsAis = new WebSocket(WS_AIS_URL);
+  wsAis.binaryType = 'arraybuffer';
+  wsAis.onopen = () => sendBbox();
+  wsAis.onmessage = e => {
+    try {
+      const data = (e.data instanceof ArrayBuffer) ? decodeBinVessel(e.data) : JSON.parse(e.data);
+      if (map.getSource('vessel')) map.getSource('vessel').setData(data);
+      document.getElementById('hud').textContent =
+        (map.getSource('ac') ? (map.getSource('ac')._data?.features?.length || 0) + ' ac  ' : '') +
+        data.features.length + ' vessels';
+    } catch(err) { console.error('ws/ais decode:', err); }
+  };
+  wsAis.onclose = () => setTimeout(connectVesselWS, 2000);
+  wsAis.onerror = () => wsAis.close();
 }
 
 map.on('style.load', () => { spriteLoaded = false; addLayers(); });
-map.on('load', () => { addLayers(); connectWS(); map.on('moveend', sendBbox); });
+map.on('load', () => { addLayers(); connectWS(); connectVesselWS(); map.on('moveend', sendBbox); });
