@@ -453,49 +453,121 @@ fn haversine_nm(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 
 // --- Router ---
 
-pub async fn serve(store: Arc<Store>, port: u16) {
-    let app = Router::new()
-        // Data endpoints
-        .route("/data/aircraft.json", get(aircraft_json))
-        .route("/data/aircraft.binCraft", get(aircraft_bincraft))
-        .route("/data/aircraft.binCraft.zst", get(aircraft_bincraft_zst))
-        .route("/data/aircraft.json.zst", get(aircraft_json_zst))
-        .route("/data/aircraft.pb", get(aircraft_pb))
-        .route("/data/aircraft.pb.zst", get(aircraft_pb_zstd))
-        .route("/data/aircraft.compact", get(aircraft_compact))
-        .route("/data/aircraft.geojson", get(aircraft_geojson))
-        .route("/data/aircraft.geojson.zst", get(aircraft_geojson_zst))
-        .route("/sprite.json", get(sprite_json))
-        .route("/sprite.png", get(sprite_png))
-        .route("/data/aircraft_recent.json", get(aircraft_recent))
-        .route("/data/receiver.json", get(receiver_json))
-        .route("/data/receiver.pb", get(receiver_pb))
-        .route("/data/status.json", get(status_json))
-        .route("/data/status.prom", get(status_prom))
-        .route("/data/clients.json", get(clients_json))
-        .route("/data/receivers.json", get(receivers_json))
-        // Traces
-        .route("/data/traces/{hex}/trace_full.json", get(trace_full))
-        .route("/data/traces/{hex}/trace_recent.json", get(trace_recent))
-        // Query API
-        .route("/re-api/", get(re_api))
-        // WebSocket
-        .route("/ws", get(crate::ws::ws_handler))
-        // Stats
-        .route("/stats", get(stats))
-        // MCP tool endpoints
-        .route("/.well-known/mcp.json", get(crate::mcp::manifest))
-        .route("/mcp/search", axum::routing::post(crate::mcp::search))
-        .route("/mcp/trace", axum::routing::post(crate::mcp::trace))
-        .route("/mcp/area", axum::routing::post(crate::mcp::area))
-        .route("/mcp/stats", get(crate::mcp::stats))
-        // Globe fallback
-        .route("/data/{*path}", get(globe_fallback))
-        .layer(CorsLayer::permissive())
-        .with_state(store);
+pub async fn serve(aircraft_store: Option<Arc<Store>>, vessel_store: Option<Arc<crate::ais::vessel::VesselStore>>, cfg: crate::config::Config) {
+    let port = cfg.api.port;
+
+    // Build aircraft routes (if enabled)
+    let mut app = Router::new();
+
+    if let Some(ref store) = aircraft_store {
+        let ac_routes = Router::new()
+            .route("/data/aircraft.json", get(aircraft_json))
+            .route("/data/aircraft.binCraft", get(aircraft_bincraft))
+            .route("/data/aircraft.binCraft.zst", get(aircraft_bincraft_zst))
+            .route("/data/aircraft.json.zst", get(aircraft_json_zst))
+            .route("/data/aircraft.pb", get(aircraft_pb))
+            .route("/data/aircraft.pb.zst", get(aircraft_pb_zstd))
+            .route("/data/aircraft.compact", get(aircraft_compact))
+            .route("/data/aircraft.geojson", get(aircraft_geojson))
+            .route("/data/aircraft.geojson.zst", get(aircraft_geojson_zst))
+            .route("/sprite.json", get(sprite_json))
+            .route("/sprite.png", get(sprite_png))
+            .route("/data/aircraft_recent.json", get(aircraft_recent))
+            .route("/data/receiver.json", get(receiver_json))
+            .route("/data/receiver.pb", get(receiver_pb))
+            .route("/data/status.json", get(status_json))
+            .route("/data/status.prom", get(status_prom))
+            .route("/data/clients.json", get(clients_json))
+            .route("/data/receivers.json", get(receivers_json))
+            .route("/data/traces/{hex}/trace_full.json", get(trace_full))
+            .route("/data/traces/{hex}/trace_recent.json", get(trace_recent))
+            .route("/re-api/", get(re_api))
+            .route("/ws", get(crate::ws::ws_handler))
+            .route("/.well-known/mcp.json", get(crate::mcp::manifest))
+            .route("/mcp/search", axum::routing::post(crate::mcp::search))
+            .route("/mcp/trace", axum::routing::post(crate::mcp::trace))
+            .route("/mcp/area", axum::routing::post(crate::mcp::area))
+            .route("/mcp/stats", get(crate::mcp::stats))
+            .route("/data/{*path}", get(globe_fallback))
+            .with_state(store.clone());
+        app = app.merge(ac_routes);
+    }
+
+    // Build vessel routes (if enabled)
+    if let Some(ref store) = vessel_store {
+        let vs_routes = Router::new()
+            .route("/api/vessels.json", get(vessels_json))
+            .route("/api/vessels.geojson", get(vessels_geojson))
+            .route("/api/vessel", get(vessel_detail))
+            .route("/ws/ais", get(crate::ws_ais::ws_handler))
+            .with_state(store.clone());
+        app = app.merge(vs_routes);
+    }
+
+    // Stats endpoint (works with whatever is enabled)
+    let ac = aircraft_store.clone();
+    let vs = vessel_store.clone();
+    app = app.route("/stats", get(move || {
+        let ac = ac.clone();
+        let vs = vs.clone();
+        async move { combined_stats(ac, vs) }
+    }));
+
+    app = app.layer(CorsLayer::permissive());
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await
         .expect("failed to bind API port");
     info!("API on :{}", port);
     axum::serve(listener, app).await.unwrap();
+}
+
+// --- Vessel handlers ---
+
+async fn vessels_json(State(store): State<Arc<crate::ais::vessel::VesselStore>>) -> Response {
+    serve_cached(store.json_cache.read().clone(), "application/json")
+}
+
+async fn vessels_geojson(State(store): State<Arc<crate::ais::vessel::VesselStore>>, Query(params): Query<HashMap<String, String>>) -> Response {
+    if let Some(bbox) = parse_box(&params) {
+        let data = store.build_geojson_filtered(bbox.0, bbox.1, bbox.2, bbox.3);
+        return (StatusCode::OK, [(header::CONTENT_TYPE, "application/geo+json"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], data).into_response();
+    }
+    serve_cached(store.geojson_cache.read().clone(), "application/geo+json")
+}
+
+async fn vessel_detail(State(store): State<Arc<crate::ais::vessel::VesselStore>>, Query(params): Query<HashMap<String, String>>) -> Response {
+    let mmsi: u32 = match params.get("mmsi").and_then(|v| v.parse().ok()) {
+        Some(m) => m,
+        None => return json_response("{\"error\":\"missing mmsi\"}".into()),
+    };
+    match store.map.get(&mmsi) {
+        Some(v) => {
+            let mut out = String::new();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+            crate::ais::vessel::vessel_json_pub(v.value(), &mut out, now);
+            json_response(out)
+        }
+        None => json_response("{\"error\":\"not found\"}".into()),
+    }
+}
+
+fn combined_stats(ac: Option<Arc<Store>>, vs: Option<Arc<crate::ais::vessel::VesselStore>>) -> Response {
+    let mut out = String::from("{");
+    let mut first = true;
+    if let Some(s) = ac {
+        let total = s.map.len();
+        let with_pos = s.map.iter().filter(|e| e.value().lat.is_some()).count();
+        let msgs = s.messages_total.load(std::sync::atomic::Ordering::Relaxed);
+        out.push_str(&format!("\"aircraft_total\":{total},\"aircraft_with_pos\":{with_pos},\"aircraft_messages\":{msgs}"));
+        first = false;
+    }
+    if let Some(s) = vs {
+        if !first { out.push(','); }
+        let total = s.map.len();
+        let with_pos = s.map.iter().filter(|e| e.value().lat.is_some()).count();
+        let msgs = s.messages_total.load(std::sync::atomic::Ordering::Relaxed);
+        out.push_str(&format!("\"vessel_total\":{total},\"vessel_with_pos\":{with_pos},\"vessel_messages\":{msgs}"));
+    }
+    out.push('}');
+    json_response(out)
 }

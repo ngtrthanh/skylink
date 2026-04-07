@@ -1,0 +1,16 @@
+[modules]
+adsb = true
+ais = true
+
+[adsb]
+ingest_port = 39004
+db = true
+
+[ais]
+nmea_host = "127.0.0.1:10110"
+db = true
+
+[api]
+port = 19180
+ws = true
+mcp = true

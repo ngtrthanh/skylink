@@ -11,6 +11,9 @@ mod compact;
 mod ws;
 mod mcp;
 mod geojson;
+mod config;
+mod ais;
+mod ws_ais;
 
 use std::sync::Arc;
 use tracing::info;
@@ -19,47 +22,66 @@ use tracing::info;
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let store = Arc::new(aircraft::Store::new());
-    let channels = Arc::new(output::OutputChannels::new());
+    let mut cfg = config::Config::load();
+    cfg.apply_cli();
 
-    let ingest_port: u16 = env("INGEST_PORT", 39004);
-    let api_port: u16 = env("API_PORT", 19180);
-    let base_port: u16 = env("BASE_PORT", 39000);
+    info!("skylink-core v4 starting (adsb={} ais={})", cfg.modules.adsb, cfg.modules.ais);
 
-    info!("skylink-core v2 starting (ingest:{} api:{} outputs:{}-{})",
-        ingest_port, api_port, base_port + 2, base_port + 47);
+    // Aircraft store (only if adsb enabled)
+    let aircraft_store = if cfg.modules.adsb {
+        Some(Arc::new(aircraft::Store::new()))
+    } else { None };
 
-    // Output TCP listeners (beast, raw, sbs, json-pos)
-    let ch = channels.clone();
-    tokio::spawn(async move { output::start_all(&ch, base_port).await; });
+    // Vessel store (only if ais enabled)
+    let vessel_store = if cfg.modules.ais {
+        Some(Arc::new(ais::vessel::VesselStore::new()))
+    } else { None };
 
-    // JSON + binCraft pre-builder
-    let s = store.clone();
-    tokio::spawn(async move { api::json_builder::run(s).await; });
+    // --- ADS-B module ---
+    if let Some(ref store) = aircraft_store {
+        let channels = Arc::new(output::OutputChannels::new());
+        let base_port: u16 = std::env::var("BASE_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(39000);
 
-    // SBS feed generator
-    let s = store.clone();
-    let ch = channels.clone();
-    tokio::spawn(async move { feed::run_sbs(s, ch).await; });
+        let ch = channels.clone();
+        tokio::spawn(async move { output::start_all(&ch, base_port).await; });
 
-    // JSON position feed generator
-    let s = store.clone();
-    let ch = channels.clone();
-    tokio::spawn(async move { feed::run_json_pos(s, ch).await; });
+        let s = store.clone();
+        tokio::spawn(async move { api::json_builder::run(s).await; });
 
-    // Reaper
-    let s = store.clone();
-    tokio::spawn(async move { aircraft::reaper(s).await; });
+        let s = store.clone();
+        let ch = channels.clone();
+        tokio::spawn(async move { feed::run_sbs(s, ch).await; });
 
-    // Beast ingest
-    let s = store.clone();
-    let ch = channels.clone();
-    tokio::spawn(async move { beast::serve_ingest(s, ch, ingest_port).await; });
+        let s = store.clone();
+        let ch = channels.clone();
+        tokio::spawn(async move { feed::run_json_pos(s, ch).await; });
 
-    // HTTP API (includes MCP endpoints)
-    api::serve(store, api_port).await;
-}
+        let s = store.clone();
+        tokio::spawn(async move { aircraft::reaper(s).await; });
 
-fn env(key: &str, default: u16) -> u16 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+        let s = store.clone();
+        let ch = channels.clone();
+        let port = cfg.adsb.ingest_port;
+        tokio::spawn(async move { beast::serve_ingest(s, ch, port).await; });
+
+        info!("adsb: beast ingest on port {}", cfg.adsb.ingest_port);
+    }
+
+    // --- AIS module ---
+    if let Some(ref store) = vessel_store {
+        let s = store.clone();
+        let host = cfg.ais.nmea_host.clone();
+        tokio::spawn(async move { ais::ingest(s, host).await; });
+
+        let s = store.clone();
+        tokio::spawn(async move { ais::vessel::cache_loop(s).await; });
+
+        let s = store.clone();
+        tokio::spawn(async move { ais::vessel::reaper(s).await; });
+
+        info!("ais: nmea ingest from {}", cfg.ais.nmea_host);
+    }
+
+    // --- HTTP API ---
+    api::serve(aircraft_store, vessel_store, cfg).await;
 }
