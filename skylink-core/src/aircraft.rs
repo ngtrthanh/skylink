@@ -88,6 +88,8 @@ pub struct Store {
     pub pb_zstd_cache: RwLock<bytes::Bytes>,
     pub compact_cache: RwLock<bytes::Bytes>,
     pub compact_zstd_cache: RwLock<bytes::Bytes>,
+    pub geojson_cache: RwLock<bytes::Bytes>,
+    pub geojson_zstd_cache: RwLock<bytes::Bytes>,
     /// Pre-built protobuf response
     pub pb_cache: RwLock<bytes::Bytes>,
     pub messages_total: std::sync::atomic::AtomicU64,
@@ -115,6 +117,8 @@ impl Store {
             pb_zstd_cache: RwLock::new(bytes::Bytes::new()),
             compact_cache: RwLock::new(bytes::Bytes::new()),
             compact_zstd_cache: RwLock::new(bytes::Bytes::new()),
+            geojson_cache: RwLock::new(bytes::Bytes::new()),
+            geojson_zstd_cache: RwLock::new(bytes::Bytes::new()),
             pb_cache: RwLock::new(bytes::Bytes::new()),
             messages_total: std::sync::atomic::AtomicU64::new(0),
             clients: RwLock::new(Vec::new()),

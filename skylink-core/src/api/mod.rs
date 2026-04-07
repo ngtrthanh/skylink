@@ -17,6 +17,8 @@ async fn aircraft_json_zst(State(s): State<Arc<Store>>) -> Response { serve_cach
 async fn aircraft_pb(State(s): State<Arc<Store>>) -> Response { serve_cached(s.pb_cache.read().clone(), "application/x-protobuf") }
 async fn aircraft_pb_zstd(State(s): State<Arc<Store>>) -> Response { serve_cached(s.pb_zstd_cache.read().clone(), "application/x-protobuf") }
 async fn aircraft_compact(State(s): State<Arc<Store>>) -> Response { serve_cached(s.compact_zstd_cache.read().clone(), "application/octet-stream") }
+async fn aircraft_geojson(State(s): State<Arc<Store>>) -> Response { serve_cached(s.geojson_cache.read().clone(), "application/geo+json") }
+async fn aircraft_geojson_zst(State(s): State<Arc<Store>>) -> Response { serve_cached(s.geojson_zstd_cache.read().clone(), "application/geo+json") }
 
 fn serve_cached(body: bytes::Bytes, ct: &'static str) -> Response {
     (StatusCode::OK, [(header::CONTENT_TYPE, ct), (header::CACHE_CONTROL, "no-cache")], body).into_response()
@@ -181,6 +183,11 @@ async fn re_api(State(store): State<Arc<Store>>, Query(params): Query<HashMap<St
 }
 
 fn serve_format_cached(store: &Arc<Store>, params: &HashMap<String, String>, use_zstd: bool) -> Response {
+    if params.contains_key("geojson") {
+        let c = if use_zstd { store.geojson_zstd_cache.read().clone() } else { store.geojson_cache.read().clone() };
+        return serve_cached(c, "application/geo+json");
+    }
+
     if params.contains_key("compact") {
         let c = if use_zstd { store.compact_zstd_cache.read().clone() } else { store.compact_cache.read().clone() };
         return serve_cached(c, "application/octet-stream");
@@ -412,6 +419,8 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/data/aircraft.pb", get(aircraft_pb))
         .route("/data/aircraft.pb.zst", get(aircraft_pb_zstd))
         .route("/data/aircraft.compact", get(aircraft_compact))
+        .route("/data/aircraft.geojson", get(aircraft_geojson))
+        .route("/data/aircraft.geojson.zst", get(aircraft_geojson_zst))
         .route("/data/aircraft_recent.json", get(aircraft_recent))
         .route("/data/receiver.json", get(receiver_json))
         .route("/data/receiver.pb", get(receiver_pb))

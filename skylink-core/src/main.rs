@@ -9,6 +9,7 @@ mod pb;
 mod compact;
 mod ws;
 mod mcp;
+mod geojson;
 
 use std::sync::Arc;
 use tracing::info;
