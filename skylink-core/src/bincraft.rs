@@ -164,28 +164,43 @@ pub fn build(store: &Arc<Store>) -> Vec<u8> {
     buf
 }
 
-/// Build binCraft filtered by bounding box
-pub fn build_filtered(store: &Arc<Store>, south: f64, north: f64, west: f64, east: f64) -> Vec<u8> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-    let now_s = now_ms as f64 / 1000.0;
-    let ac_with_pos = store.map.iter().filter(|e| e.value().lat.is_some()).count() as u32;
-    let total_msgs = store.messages_total.load(std::sync::atomic::Ordering::Relaxed) as u32;
+/// Build binCraft filtered by bounding box — zero re-encoding
+/// Reads pre-encoded records from the full cache, filters by lat/lon in the binary
+pub fn build_filtered_from_cache(cache: &[u8], south: f64, north: f64, west: f64, east: f64) -> Vec<u8> {
+    if cache.len() < STRIDE as usize { return Vec::new(); }
 
-    let mut buf = Vec::with_capacity(STRIDE as usize * 4096);
-    buf.extend_from_slice(&make_header(
-        now_ms, ac_with_pos, total_msgs,
-        south.max(-90.0) as i16, west.max(-180.0) as i16,
-        north.min(90.0) as i16, east.min(180.0) as i16,
-    ));
+    let s_i32 = (south * 1e6) as i32;
+    let n_i32 = (north * 1e6) as i32;
+    let w_i32 = (west * 1e6) as i32;
+    let e_i32 = (east * 1e6) as i32;
 
-    for entry in store.map.iter() {
-        let ac = entry.value();
-        if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
-            if lat >= south && lat <= north && lon_in_box(lon, west, east) {
-                buf.extend_from_slice(&encode_aircraft(*entry.key(), ac, now_s));
+    // Copy header, update bbox
+    let mut hdr = [0u8; STRIDE as usize];
+    hdr.copy_from_slice(&cache[..STRIDE as usize]);
+    write_i16(&mut hdr, 20, south.max(-90.0) as i16);
+    write_i16(&mut hdr, 22, west.max(-180.0) as i16);
+    write_i16(&mut hdr, 24, north.min(90.0) as i16);
+    write_i16(&mut hdr, 26, east.min(180.0) as i16);
+
+    let mut buf = Vec::with_capacity(cache.len());
+    buf.extend_from_slice(&hdr);
+
+    let stride = STRIDE as usize;
+    let mut off = stride;
+    while off + stride <= cache.len() {
+        let rec = &cache[off..off + stride];
+        // lat at s32[3] (byte 12), lon at s32[2] (byte 8)
+        let lon = i32::from_le_bytes([rec[8], rec[9], rec[10], rec[11]]);
+        let lat = i32::from_le_bytes([rec[12], rec[13], rec[14], rec[15]]);
+        // validity: position bit is u8[73] & 64
+        if rec[73] & 64 != 0 && lat >= s_i32 && lat <= n_i32 {
+            let lon_ok = if w_i32 <= e_i32 { lon >= w_i32 && lon <= e_i32 }
+                         else { lon >= w_i32 || lon <= e_i32 };
+            if lon_ok {
+                buf.extend_from_slice(rec);
             }
         }
+        off += stride;
     }
     buf
 }

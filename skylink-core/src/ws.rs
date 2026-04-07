@@ -24,7 +24,10 @@ async fn handle_ws(mut socket: WebSocket, store: Arc<Store>) {
         tokio::select! {
             _ = tick.tick() => {
                 let raw = match bbox {
-                    Some((s, n, w, e)) => bincraft::build_filtered(&store, s, n, w, e),
+                    Some((s, n, w, e)) => {
+                        let cache = store.bincraft_cache.read().clone();
+                        bincraft::build_filtered_from_cache(&cache, s, n, w, e)
+                    }
                     None => store.bincraft_cache.read().to_vec(),
                 };
                 let compressed = zstd::encode_all(raw.as_slice(), 3).unwrap_or(raw);

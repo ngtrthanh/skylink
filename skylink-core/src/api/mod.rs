@@ -138,6 +138,16 @@ async fn re_api(State(store): State<Arc<Store>>, Query(params): Query<HashMap<St
         return serve_format_cached(&store, &params, use_zstd);
     }
 
+    // Fast path: bbox-only + binCraft → filter from pre-built cache (no re-encoding)
+    if bbox.is_some() && !has_filter_except_bbox(&find_hex, &find_cs, &filter_squawk, filter_mil, above_alt, below_alt, all_with_pos, circle) {
+        if params.contains_key("binCraft") {
+            let (s, n, w, e) = bbox.unwrap();
+            let cache = store.bincraft_cache.read().clone();
+            let raw = crate::bincraft::build_filtered_from_cache(&cache, s, n, w, e);
+            return serve_binary(raw, use_zstd, "application/octet-stream");
+        }
+    }
+
     // Filtered: collect matching ICAOs
     let filtered: Vec<(u32, crate::aircraft::Aircraft)> = store.map.iter().filter_map(|entry| {
         let ac = entry.value();
@@ -410,6 +420,13 @@ fn zstd_with_size(data: &[u8]) -> Vec<u8> {
 
 fn now_secs() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()
+}
+
+fn has_filter_except_bbox(
+    hex: &Option<u32>, cs: &Option<String>, sq: &Option<String>,
+    mil: bool, above: Option<i32>, below: Option<i32>, awp: bool, circle: Option<(f64,f64,f64)>,
+) -> bool {
+    hex.is_some() || cs.is_some() || sq.is_some() || mil || above.is_some() || below.is_some() || awp || circle.is_some()
 }
 
 fn parse_box(p: &HashMap<String, String>) -> Option<(f64, f64, f64, f64)> {
