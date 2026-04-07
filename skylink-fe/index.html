@@ -31,6 +31,7 @@
 
 <script src="/maplibre-gl.js"></script>
 <script src="/mapManager.js"></script>
+<script src="/iconMap.js"></script>
 <script>
 const WS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
 let ws = null, selected = null;
@@ -67,25 +68,9 @@ function addLayers() {
       0,'#2ecc71',15000,'#f1c40f',30000,'#e67e22',42000,'#e74c3c'],
     'line-width':2, 'line-opacity':0.7 }});
 
-  // Aircraft icons — 81 shapes, category-mapped
+  // Aircraft icons — 81 shapes, resolved per feature
   map.addLayer({ id:'ac-icons', type:'symbol', source:'ac', layout:{
-    'icon-image':['match',['get','category'],
-      'A0','unknown',
-      'A1','cessna',
-      'A2','twin_small',
-      'A3','jet_swept',
-      'A4','jet_swept',
-      'A5','airliner',
-      'A6','hi_perf',
-      'A7','helicopter',
-      'B1','glider',
-      'B2','balloon',
-      'B4','para',
-      'B6','uav',
-      'C1','ground_emergency',
-      'C2','ground_service',
-      'C3','ground_square',
-      'unknown'],
+    'icon-image':['coalesce',['get','_icon'],'unknown'],
     'icon-size':['interpolate',['linear'],['zoom'], 2,0.35, 5,0.5, 8,0.65, 12,0.85, 15,1.0],
     'icon-rotate':['coalesce',['get','track'],0],
     'icon-rotation-alignment':'map',
@@ -149,6 +134,10 @@ function connectWS() {
   ws.onmessage = e => {
     try {
       const data = JSON.parse(e.data);
+      // Resolve icon shape for each feature
+      for (const f of data.features) {
+        f.properties._icon = resolveIcon(f.properties);
+      }
       if (map.getSource('ac')) map.getSource('ac').setData(data);
       document.getElementById('hud').textContent = data.features.length + ' ac';
     } catch(err) {}
