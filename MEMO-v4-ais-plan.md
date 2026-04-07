@@ -88,7 +88,150 @@ struct Vessel {
 
 ---
 
+## Module Toggle System
+
+Idle modules waste CPU (cache rebuild loops, TCP listeners, DashMap overhead). v4 adds a config-driven module system — each module only starts if enabled.
+
+### Config (`skylink.toml`)
+
+```toml
+[modules]
+adsb = true          # ADS-B aircraft tracking
+ais = false          # AIS vessel tracking (off by default)
+
+[adsb]
+beast_host = "127.0.0.1:30005"
+db = true            # Aircraft type DB (462K entries, ~20MB RAM)
+
+[ais]
+nmea_host = "127.0.0.1:10110"
+db = true            # Vessel DB (MMSI enrichment)
+
+[api]
+port = 19180
+formats = ["json", "geojson", "bincraft", "pb"]  # Only register enabled formats
+ws = true            # WebSocket push
+mcp = true           # MCP AI endpoints
+prometheus = true    # /stats endpoint
+
+[outputs]
+beast = false        # TCP BEAST output
+sbs = false          # SBS/BaseStation output
+raw = false          # Raw output
+json_pos = false     # JSON position output
+```
+
+### What Gets Skipped When Disabled
+
+| Module off | Skipped | RAM saved | CPU saved |
+|---|---|---|---|
+| `ais = false` | NMEA listener, vessel DashMap, vessel cache loop, AIS decoder, `/api/vessels.*`, `/ws/ais` | ~50MB | ~5% |
+| `adsb = false` | BEAST listener, aircraft DashMap, aircraft cache loop, binCraft encoder, `/data/aircraft.*`, `/ws` | ~80MB | ~15% |
+| `db = false` (adsb) | 462K aircraft type HashMap | ~20MB | 0% |
+| `mcp = false` | MCP routes | 0 | 0% |
+| `ws = false` | WebSocket handler, per-client bbox filter loops | ~10MB/client | ~5%/client |
+| `beast output = false` | TCP listener + encoder | ~1MB | ~2% |
+
+### Implementation
+
+```rust
+// main.rs — conditional module startup
+let cfg = Config::load("skylink.toml");
+
+let store = Arc::new(Store::new(&cfg));
+
+if cfg.modules.adsb {
+    let s = store.clone();
+    tokio::spawn(async move { beast::connect(s, &cfg.adsb.beast_host).await });
+    tokio::spawn(async move { cache::rebuild_aircraft_loop(store.clone()).await });
+}
+
+if cfg.modules.ais {
+    let s = store.clone();
+    tokio::spawn(async move { ais::connect(s, &cfg.ais.nmea_host).await });
+    tokio::spawn(async move { cache::rebuild_vessel_loop(store.clone()).await });
+}
+
+// Router — only register enabled endpoints
+let app = api::build_router(&store, &cfg);
+```
+
+```rust
+// api/mod.rs — conditional route registration
+pub fn build_router(store: &Arc<Store>, cfg: &Config) -> Router {
+    let mut app = Router::new()
+        .route("/stats", get(stats));
+
+    if cfg.modules.adsb {
+        app = app
+            .route("/data/aircraft.json", get(aircraft_json))
+            .route("/re-api/", get(re_api))
+            .route("/ws", get(ws::ws_handler));
+        // ... all aircraft routes
+    }
+
+    if cfg.modules.ais {
+        app = app
+            .route("/api/vessels.json", get(vessels_json))
+            .route("/api/vessels.geojson", get(vessels_geojson))
+            .route("/ws/ais", get(ws_ais::ws_handler));
+        // ... all vessel routes
+    }
+
+    if cfg.api.mcp {
+        app = app
+            .route("/.well-known/mcp.json", get(mcp::manifest))
+            .route("/mcp/search", post(mcp::search));
+    }
+
+    app.with_state(store.clone())
+}
+```
+
+### Store — Conditional Allocation
+
+```rust
+pub struct Store {
+    // Only allocated if adsb=true
+    pub aircraft: Option<DashMap<u32, Aircraft>>,
+    pub aircraft_caches: Option<AircraftCaches>,
+
+    // Only allocated if ais=true
+    pub vessels: Option<DashMap<u32, Vessel>>,
+    pub vessel_caches: Option<VesselCaches>,
+
+    // Always present
+    pub messages_total: AtomicU64,
+    pub config: Config,
+}
+```
+
+### CLI Override
+
+```bash
+# Enable both
+skylink-core --adsb --ais
+
+# AIS only (no aircraft overhead)
+skylink-core --ais --no-adsb
+
+# Aircraft only (default, backward compatible with v3)
+skylink-core --adsb
+```
+
+Config file values are defaults, CLI flags override.
+
+---
+
 ## Implementation Plan
+
+### Phase 0: Module Toggle System (Day 1)
+
+- Add `skylink.toml` config parser (use `toml` crate)
+- Refactor `main.rs` to conditionally spawn modules
+- Refactor `Store` to use `Option<DashMap>` per module
+- Refactor `api/mod.rs` to conditionally register routes
+- Backward compatible: no config file = adsb=true, ais=false (same as v3)
 
 ### Phase 1: NMEA Ingest + Vessel Store (Week 1)
 
@@ -193,13 +336,14 @@ RTL-SDR 1090MHz          RTL-SDR 162MHz
 
 | Phase | Task | Days |
 |---|---|---|
+| 0 | Module toggle system (config, conditional spawn, conditional routes) | 1 |
 | 1 | NMEA parser + AIS decoder (types 1-5,18,19,21,24) | 2 |
 | 1 | Vessel store + path buffer | 1 |
 | 2 | API endpoints + GeoJSON + WS | 1 |
 | 2 | Vessel DB (MMSI enrichment) | 0.5 |
 | 3 | FE vessel layer + icons + panel | 2 |
 | 4 | Unified WS + MCP + metrics | 1 |
-| | **Total** | **~7.5 days** |
+| | **Total** | **~8.5 days** |
 
 ---
 
