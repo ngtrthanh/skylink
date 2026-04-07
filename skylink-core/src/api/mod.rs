@@ -20,6 +20,15 @@ async fn aircraft_compact(State(s): State<Arc<Store>>) -> Response { serve_cache
 async fn aircraft_geojson(State(s): State<Arc<Store>>) -> Response { serve_cached(s.geojson_cache.read().clone(), "application/geo+json") }
 async fn aircraft_geojson_zst(State(s): State<Arc<Store>>) -> Response { serve_cached(s.geojson_zstd_cache.read().clone(), "application/geo+json") }
 
+async fn sprite_json() -> Response {
+    let body = r#"{"aircraft":{"width":32,"height":32,"x":0,"y":0,"sdf":true,"pixelRatio":1}}"#;
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], body).into_response()
+}
+async fn sprite_png() -> Response {
+    let png = include_bytes!("../../aircraft-icon.png");
+    (StatusCode::OK, [(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "public, max-age=86400")], png.as_slice()).into_response()
+}
+
 fn serve_cached(body: bytes::Bytes, ct: &'static str) -> Response {
     (StatusCode::OK, [(header::CONTENT_TYPE, ct), (header::CACHE_CONTROL, "no-cache")], body).into_response()
 }
@@ -421,6 +430,8 @@ pub async fn serve(store: Arc<Store>, port: u16) {
         .route("/data/aircraft.compact", get(aircraft_compact))
         .route("/data/aircraft.geojson", get(aircraft_geojson))
         .route("/data/aircraft.geojson.zst", get(aircraft_geojson_zst))
+        .route("/sprite.json", get(sprite_json))
+        .route("/sprite.png", get(sprite_png))
         .route("/data/aircraft_recent.json", get(aircraft_recent))
         .route("/data/receiver.json", get(receiver_json))
         .route("/data/receiver.pb", get(receiver_pb))
