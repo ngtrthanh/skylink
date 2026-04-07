@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // --- Path ring buffer ---
 const MAX_PATH_POINTS: usize = 256;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct PathPoint {
     pub lat: f32,
     pub lon: f32,
@@ -15,7 +15,7 @@ pub struct PathPoint {
     pub cog: f32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct PathBuffer {
     buf: Vec<PathPoint>,
     head: usize,
@@ -107,7 +107,7 @@ pub struct VesselUpdate {
 }
 
 // --- Vessel ---
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Vessel {
     pub mmsi: u32,
     pub lat: Option<f32>,
@@ -287,6 +287,29 @@ impl VesselStore {
         self.messages_total.fetch_add(1, Ordering::Relaxed);
         self.stats.record(u.msg_type, u.shipclass);
         self.map.entry(u.mmsi).or_insert_with(|| Vessel::new(u.mmsi)).apply(&u);
+    }
+
+    /// Save vessel store to disk
+    pub fn save(&self, path: &str) -> std::io::Result<()> {
+        let vessels: Vec<Vessel> = self.map.iter().map(|e| e.value().clone()).collect();
+        let json = serde_json::to_vec(&vessels).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let compressed = zstd_compress(&json);
+        std::fs::write(path, &compressed)?;
+        tracing::info!("ais: saved {} vessels to {path} ({} bytes)", vessels.len(), compressed.len());
+        Ok(())
+    }
+
+    /// Load vessel store from disk
+    pub fn load(&self, path: &str) -> std::io::Result<usize> {
+        let compressed = std::fs::read(path)?;
+        let json = zstd::decode_all(compressed.as_slice())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let vessels: Vec<Vessel> = serde_json::from_slice(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let count = vessels.len();
+        for v in vessels { self.map.insert(v.mmsi, v); }
+        tracing::info!("ais: loaded {count} vessels from {path}");
+        Ok(count)
     }
 
     pub fn rebuild_caches(&self, store_arc: &Arc<VesselStore>) {

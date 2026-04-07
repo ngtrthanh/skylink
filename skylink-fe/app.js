@@ -1,7 +1,7 @@
 const API_BASE = window.SKYLINK_API || '';
 const WS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + (window.SKYLINK_API ? new URL(API_BASE).host : location.host) + '/ws';
 const WS_AIS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + (window.SKYLINK_API ? new URL(API_BASE).host : location.host) + '/ws/ais';
-let ws = null, wsAis = null, selected = null, spriteLoaded = false;
+let ws = null, wsAis = null, selected = null, spriteLoaded = false, vesselSpriteLoaded = false;
 
 const map = initMap({ containerId: 'maplibreMap', center: [20, 30], zoom: 3 });
 
@@ -14,7 +14,7 @@ function toggleLayer(which) {
   } else {
     showVessels = !showVessels;
     document.getElementById('btn-vs').classList.toggle('on', showVessels);
-    if (map.getLayer('vessel-dots')) map.setLayoutProperty('vessel-dots', 'visibility', showVessels ? 'visible' : 'none');
+    ['vessel-dots','vessel-icons'].forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', showVessels ? 'visible' : 'none'); });
   }
 }
 
@@ -39,6 +39,28 @@ function loadSprite(cb) {
   img.src = '/sprite' + dpr + '.png';
 }
 
+function loadVesselSprite(cb) {
+  const dpr = window.devicePixelRatio >= 2 ? '@2x' : '';
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    fetch('/vessel-sprite' + dpr + '.json').then(r => r.json()).then(meta => {
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      for (const [name, m] of Object.entries(meta)) {
+        const vname = 'v_' + name;
+        const data = c.getContext('2d').getImageData(m.x, m.y, m.width, m.height);
+        if (!map.hasImage(vname))
+          map.addImage(vname, {width:m.width, height:m.height, data:data.data}, {sdf:true, pixelRatio: m.pixelRatio});
+      }
+      vesselSpriteLoaded = true;
+      if (cb) cb();
+    });
+  };
+  img.src = '/vessel-sprite' + dpr + '.png';
+}
+
 function addLayers() {
   if (map.getSource('ac')) return;
 
@@ -51,7 +73,7 @@ function addLayers() {
       0,'#2ecc71',15000,'#f1c40f',30000,'#e67e22',42000,'#e74c3c'],
     'line-width':2, 'line-opacity':0.7 }});
 
-  // Vessel layer — colored by ship type
+  // Vessel layer — colored ship icons by type
   map.addLayer({ id:'vessel-dots', type:'circle', source:'vessel', paint:{
     'circle-radius':['interpolate',['linear'],['zoom'], 2,2, 6,3.5, 10,5, 14,7],
     'circle-color':['match',['get','shiptype'],
@@ -99,6 +121,28 @@ function addLayers() {
   if (spriteLoaded) addIconLayer();
   else loadSprite(addIconLayer);
 
+  function addVesselIconLayer() {
+    if (map.getLayer('vessel-icons')) return;
+    map.addLayer({ id:'vessel-icons', type:'symbol', source:'vessel', layout:{
+      'icon-image':['coalesce',['get','_vicon'],'v_v_default'],
+      'icon-size':['interpolate',['linear'],['zoom'], 2,0.4, 5,0.55, 8,0.7, 12,0.9, 15,1.1],
+      'icon-rotate':['coalesce',['get','heading'],['get','cog'],0],
+      'icon-rotation-alignment':'map',
+      'icon-allow-overlap':true,
+      'icon-ignore-placement':true,
+      'icon-padding':0,
+    }, paint:{
+      'icon-color':['match',['get','shiptype'],
+        30,'#FF9800', 36,'#9C27B0', 52,'#795548',
+        ['interpolate',['linear'],['get','shiptype'],
+          0,'#9E9E9E', 59,'#9E9E9E', 60,'#2196F3', 69,'#2196F3',
+          70,'#4CAF50', 79,'#4CAF50', 80,'#F44336', 89,'#F44336', 90,'#9E9E9E']],
+    }});
+  }
+
+  if (vesselSpriteLoaded) addVesselIconLayer();
+  else loadVesselSprite(addVesselIconLayer);
+
   const clickHandler = e => {
     const p = e.features[0].properties;
     selected = p.hex;
@@ -134,9 +178,12 @@ function addLayers() {
   map.on('click','vessel-dots', vesselClickHandler);
   map.on('mouseenter','vessel-dots',()=>map.getCanvas().style.cursor='pointer');
   map.on('mouseleave','vessel-dots',()=>map.getCanvas().style.cursor='');
+  map.on('click','vessel-icons', vesselClickHandler);
+  map.on('mouseenter','vessel-icons',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','vessel-icons',()=>map.getCanvas().style.cursor='');
 
   map.on('click', e => {
-    const layers = map.getLayer('ac-icons') ? ['ac-icons','ac-dots','vessel-dots'] : ['ac-dots','vessel-dots'];
+    const layers = map.getLayer('ac-icons') ? ['ac-icons','ac-dots','vessel-dots','vessel-icons'] : ['ac-dots','vessel-dots'];
     if (!map.queryRenderedFeatures(e.point,{layers}).length) closePanel();
   });
 }
@@ -205,6 +252,7 @@ function connectVesselWS() {
   wsAis.onmessage = e => {
     try {
       const data = (e.data instanceof ArrayBuffer) ? decodeBinVessel(e.data) : JSON.parse(e.data);
+      for (const f of data.features) f.properties._vicon = 'v_' + resolveVesselIcon(f.properties);
       if (map.getSource('vessel')) map.getSource('vessel').setData(data);
       document.getElementById('hud').textContent =
         (map.getSource('ac') ? (map.getSource('ac')._data?.features?.length || 0) + ' ac  ' : '') +
@@ -215,5 +263,5 @@ function connectVesselWS() {
   wsAis.onerror = () => wsAis.close();
 }
 
-map.on('style.load', () => { spriteLoaded = false; addLayers(); });
+map.on('style.load', () => { spriteLoaded = false; vesselSpriteLoaded = false; addLayers(); });
 map.on('load', () => { addLayers(); connectWS(); connectVesselWS(); map.on('moveend', sendBbox); });

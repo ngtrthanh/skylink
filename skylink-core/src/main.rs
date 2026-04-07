@@ -63,8 +63,17 @@ async fn main() {
 
     // --- AIS module ---
     let nmea_tx = if cfg.modules.ais { Some(nmea_out::new_channel()) } else { None };
+    let state_path = std::env::var("AIS_STATE_PATH").unwrap_or_else(|_| "/data/vessels.state".into());
 
     if let Some(ref store) = vessel_store {
+        // Load persisted state
+        if std::path::Path::new(&state_path).exists() {
+            match store.load(&state_path) {
+                Ok(n) => info!("ais: restored {n} vessels from disk"),
+                Err(e) => tracing::warn!("ais: failed to load state: {e}"),
+            }
+        }
+
         let s = store.clone();
         let host = cfg.ais.nmea_host.clone();
         let tx = nmea_tx.clone();
@@ -76,6 +85,14 @@ async fn main() {
         let s = store.clone();
         tokio::spawn(async move { ais::vessel::reaper(s).await; });
 
+        // Periodic state save (every 5 min)
+        let s = store.clone();
+        let sp = state_path.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop { interval.tick().await; let _ = s.save(&sp); }
+        });
+
         // NMEA TCP output
         if let Some(ref tx) = nmea_tx {
             let t = tx.clone();
@@ -85,6 +102,18 @@ async fn main() {
 
         info!("ais: nmea ingest from {}, nmea output on :10111", cfg.ais.nmea_host);
     }
+
+    // Graceful shutdown — save state
+    let vs_for_shutdown = vessel_store.clone();
+    let sp_for_shutdown = state_path.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        if let Some(ref store) = vs_for_shutdown {
+            info!("shutting down — saving vessel state");
+            let _ = store.save(&sp_for_shutdown);
+        }
+        std::process::exit(0);
+    });
 
     // --- HTTP API ---
     api::serve(aircraft_store, vessel_store, cfg).await;
