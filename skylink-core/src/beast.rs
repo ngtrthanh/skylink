@@ -15,13 +15,12 @@ pub struct BeastFrame {
     pub receiver_id: Option<u64>,
 }
 
-/// Format a u64 receiver ID as UUID-style hex string (readsb format)
+/// Format a u64 receiver ID as UUID-style hex string (readsb sprint_uuid1 format)
 fn format_receiver_id(id: u64) -> String {
-    format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+    format!("{:08x}-{:04x}-{:04x}",
         (id >> 32) as u32,
-        (id >> 16) as u16 & 0xffff,
-        id as u16,
-        0u16, 0u64)
+        (id >> 16) as u16,
+        id as u16)
 }
 
 /// fasthash64 — same as readsb's fasthash64 (Zilong Tan, MIT license)
