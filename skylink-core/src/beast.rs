@@ -86,9 +86,10 @@ pub async fn serve_ingest(store: Arc<Store>, channels: Arc<OutputChannels>, port
         tokio::spawn(async move {
             info!("feeder connected: {}", addr);
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
-            store.clients.write().push(crate::aircraft::ClientInfo { addr: addr_str.clone(), connected_at: now, messages: 0 });
-            handle_feeder(socket, store.clone(), ch).await;
-            store.clients.write().retain(|c| c.addr != addr_str);
+            let uuid = format!("feeder-{}", addr_str.replace([':', '.', '[', ']'], "-"));
+            store.clients.write().push(crate::aircraft::Receiver::new(uuid.clone(), addr_str.clone(), now));
+            handle_feeder(socket, store.clone(), ch, uuid.clone()).await;
+            store.clients.write().retain(|r| r.uuid != uuid);
             info!("feeder disconnected: {}", addr);
         });
     }
@@ -101,9 +102,10 @@ async fn connect_upstream(store: Arc<Store>, channels: Arc<OutputChannels>, addr
             Ok(socket) => {
                 info!("upstream connected: {}", addr);
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
-                store.clients.write().push(crate::aircraft::ClientInfo { addr: addr.clone(), connected_at: now, messages: 0 });
-                handle_feeder(socket, store.clone(), channels.clone()).await;
-                store.clients.write().retain(|c| c.addr != addr);
+                let uuid = format!("upstream-{}", addr.replace([':', '.', '[', ']'], "-"));
+                store.clients.write().push(crate::aircraft::Receiver::new(uuid.clone(), addr.clone(), now));
+                handle_feeder(socket, store.clone(), channels.clone(), uuid.clone()).await;
+                store.clients.write().retain(|r| r.uuid != uuid);
                 warn!("upstream disconnected: {}", addr);
             }
             Err(e) => warn!("upstream connect failed: {} — {}", addr, e),
@@ -112,7 +114,7 @@ async fn connect_upstream(store: Arc<Store>, channels: Arc<OutputChannels>, addr
     }
 }
 
-async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, channels: Arc<OutputChannels>) {
+async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, channels: Arc<OutputChannels>, receiver_uuid: String) {
     let mut buf = vec![0u8; 64 * 1024];
     let mut carry = Vec::new();
 
@@ -132,6 +134,7 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
         let (frames, consumed) = extract_frames(&data);
         carry = data[consumed..].to_vec();
 
+        let mut positions: Vec<(f64, f64)> = Vec::new();
         for frame in frames {
             if let Some(msg) = mode_s::decode(&frame.payload) {
                 // Raw output: hex string per message
@@ -140,7 +143,26 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
                     .collect::<String>() + "\n";
                 let _ = channels.raw.send(raw_line.into_bytes());
 
+                // Collect positions before update (check if this message will produce a position)
+                let had_pos = msg.cpr_lat.is_some() && msg.cpr_lon.is_some();
                 store.update_from_message(&msg, frame.signal);
+                if had_pos {
+                    if let Some(entry) = store.map.get(&msg.icao) {
+                        if let (Some(lat), Some(lon)) = (entry.value().lat, entry.value().lon) {
+                            positions.push((lat, lon));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Batch-update receiver stats
+        if !positions.is_empty() {
+            let mut receivers = store.clients.write();
+            if let Some(r) = receivers.iter_mut().find(|r| r.uuid == receiver_uuid) {
+                for (lat, lon) in &positions {
+                    r.record_position(*lat, *lon);
+                }
             }
         }
     }

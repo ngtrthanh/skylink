@@ -83,9 +83,14 @@ async fn status_prom(State(store): State<Arc<Store>>) -> Response {
 // --- clients.json: connected feeders ---
 
 async fn clients_json(State(store): State<Arc<Store>>) -> Response {
-    let clients = store.clients.read().clone();
-    let body = serde_json::to_string(&clients).unwrap_or("[]".into());
-    json_response(format!(r#"{{"now":{:.1},"clients":{}}}"#, now_secs(), body))
+    let receivers = store.clients.read().clone();
+    let mut buf = format!(r#"{{"now":{:.1},"clients":["#, now_secs());
+    for (i, r) in receivers.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        buf.push_str(&format!(r#"{{"addr":"{}","connected":{:.1},"positions":{}}}"#, r.addr, r.connected_at, r.position_counter));
+    }
+    buf.push_str("]}");
+    json_response(buf)
 }
 
 // --- receivers.json: receiver UUID list ---

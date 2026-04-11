@@ -40,11 +40,16 @@ pub async fn run(store: Arc<Store>) {
         *store.geojson_zstd_cache.write() = bytes::Bytes::from(zstd3(&gj));
         *store.geojson_cache.write() = bytes::Bytes::from(gj);
 
-        // Rebuild receivers cache from connected clients
-        let clients = store.clients.read().clone();
-        let rcv: Vec<serde_json::Value> = clients.iter().enumerate().map(|(i, c)| {
-            serde_json::json!({ "uid": format!("feeder-{i}"), "addr": c.addr, "connected": c.connected_at })
-        }).collect();
-        *store.receivers_cache.write() = bytes::Bytes::from(serde_json::to_vec(&rcv).unwrap_or_default());
+        // Rebuild receivers cache — readsb format: array of arrays
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+        let receivers = store.clients.read().clone();
+        let mut rcv_buf = String::from("[");
+        for (i, r) in receivers.iter().enumerate() {
+            if i > 0 { rcv_buf.push(','); }
+            let elapsed = now - r.connected_at;
+            rcv_buf.push_str(&r.to_json_array(elapsed));
+        }
+        rcv_buf.push(']');
+        *store.receivers_cache.write() = bytes::Bytes::from(rcv_buf);
     }
 }

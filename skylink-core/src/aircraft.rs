@@ -100,7 +100,7 @@ pub struct Store {
     /// Pre-built protobuf response
     pub pb_cache: RwLock<bytes::Bytes>,
     pub messages_total: std::sync::atomic::AtomicU64,
-    pub clients: RwLock<Vec<ClientInfo>>,
+    pub clients: RwLock<Vec<Receiver>>,
     pub receivers_cache: RwLock<bytes::Bytes>,
     pub start_time: f64,
 }
@@ -110,6 +110,58 @@ pub struct ClientInfo {
     pub addr: String,
     pub connected_at: f64,
     pub messages: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Receiver {
+    pub uuid: String,
+    pub addr: String,
+    pub connected_at: f64,
+    pub position_counter: u64,
+    pub timed_out_counter: u64,
+    pub lat_min: f64,
+    pub lat_max: f64,
+    pub lon_min: f64,
+    pub lon_max: f64,
+    pub bad_extent: bool,
+}
+
+impl Receiver {
+    pub fn new(uuid: String, addr: String, connected_at: f64) -> Self {
+        Self {
+            uuid, addr, connected_at,
+            position_counter: 0, timed_out_counter: 0,
+            lat_min: 90.0, lat_max: -90.0,
+            lon_min: 180.0, lon_max: -180.0,
+            bad_extent: false,
+        }
+    }
+
+    pub fn record_position(&mut self, lat: f64, lon: f64) {
+        self.position_counter += 1;
+        if lat < self.lat_min { self.lat_min = lat; }
+        if lat > self.lat_max { self.lat_max = lat; }
+        if lon < self.lon_min { self.lon_min = lon; }
+        if lon > self.lon_max { self.lon_max = lon; }
+        // badExtent: coverage > 20 degrees in either axis
+        self.bad_extent = (self.lat_max - self.lat_min) > 20.0 || (self.lon_max - self.lon_min) > 20.0;
+    }
+
+    /// Build readsb-format array: [uuid, posRate, timeoutRate, latMin, latMax, lonMin, lonMax, badExtent, centerLat, centerLon]
+    pub fn to_json_array(&self, elapsed: f64) -> String {
+        let elapsed = if elapsed > 0.0 { elapsed } else { 1.0 };
+        let pos_rate = self.position_counter as f64 / elapsed;
+        let timeout_rate = self.timed_out_counter as f64 * 3600.0 / elapsed;
+        let center_lat = self.lat_min + (self.lat_max - self.lat_min) / 2.0;
+        let center_lon = self.lon_min + (self.lon_max - self.lon_min) / 2.0;
+        format!(
+            "[\"{}\",{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{},{:.2},{:.2}]",
+            self.uuid, pos_rate, timeout_rate,
+            self.lat_min, self.lat_max, self.lon_min, self.lon_max,
+            if self.bad_extent { 1 } else { 0 },
+            center_lat, center_lon
+        )
+    }
 }
 
 impl Store {
