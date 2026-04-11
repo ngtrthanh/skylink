@@ -24,6 +24,49 @@ fn format_receiver_id(id: u64) -> String {
         0u16, 0u64)
 }
 
+/// fasthash64 — same as readsb's fasthash64 (Zilong Tan, MIT license)
+fn fasthash64(buf: &[u8], seed: u64) -> u64 {
+    let m: u64 = 0x880355f21e6d1965;
+    let mut h: u64 = seed ^ ((buf.len() as u64).wrapping_mul(m));
+
+    // Process 8-byte chunks
+    let mut i = 0;
+    while i + 8 <= buf.len() {
+        let mut v = u64::from_le_bytes(buf[i..i+8].try_into().unwrap());
+        v ^= v >> 23;
+        v = v.wrapping_mul(0x2127599bf4325c37);
+        v ^= v >> 47;
+        h ^= v;
+        h = h.wrapping_mul(m);
+        i += 8;
+    }
+
+    // Process remaining bytes
+    let mut v: u64 = 0;
+    let rem = buf.len() & 7;
+    for j in (0..rem).rev() {
+        v ^= (buf[i + j] as u64) << (j * 8);
+    }
+    if rem > 0 {
+        v ^= v >> 23;
+        v = v.wrapping_mul(0x2127599bf4325c37);
+        v ^= v >> 47;
+        h ^= v;
+        h = h.wrapping_mul(m);
+    }
+
+    h ^= h >> 23;
+    h = h.wrapping_mul(0x2127599bf4325c37);
+    h ^= h >> 47;
+    h
+}
+
+/// Generate receiver UUID from peer address, same as readsb: fasthash64("{host} port {port}", seed)
+fn receiver_id_from_addr(addr: &std::net::SocketAddr) -> u64 {
+    let proxy_string = format!("{} port {}", addr.ip(), addr.port());
+    fasthash64(proxy_string.as_bytes(), 0x2127599bf4325c37)
+}
+
 /// Extract Beast frames from buffer, also parsing 0x1a 0xe3 receiver ID messages.
 /// Each frame carries the most recent receiver_id seen before it.
 pub fn extract_frames(buf: &[u8]) -> (Vec<BeastFrame>, usize) {
@@ -116,13 +159,11 @@ pub async fn serve_ingest(store: Arc<Store>, channels: Arc<OutputChannels>, port
         };
         let store = store.clone();
         let ch = channels.clone();
-        let addr_str = addr.to_string();
         tokio::spawn(async move {
             info!("feeder connected: {}", addr);
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
-            // Use addr as initial UUID; will be replaced if feeder sends 0xe3 receiver ID
-            let initial_uuid = format!("feeder-{}", addr_str.replace([':', '.', '[', ']'], "-"));
-            store.clients.write().push(crate::aircraft::Receiver::new(initial_uuid.clone(), addr_str.clone(), now));
+            let initial_uuid = format_receiver_id(receiver_id_from_addr(&addr));
+            store.clients.write().push(crate::aircraft::Receiver::new(initial_uuid.clone(), addr.to_string(), now));
             handle_feeder(socket, store.clone(), ch, initial_uuid.clone()).await;
             info!("feeder disconnected: {}", addr);
         });
@@ -136,7 +177,11 @@ async fn connect_upstream(store: Arc<Store>, channels: Arc<OutputChannels>, addr
             Ok(socket) => {
                 info!("upstream connected: {}", addr);
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
-                let initial_uuid = format!("upstream-{}", addr.replace([':', '.', '[', ']'], "-"));
+                let peer = socket.peer_addr().ok();
+                let initial_uuid = match peer {
+                    Some(a) => format_receiver_id(receiver_id_from_addr(&a)),
+                    None => format!("upstream-{}", addr.replace([':', '.', '[', ']'], "-")),
+                };
                 store.clients.write().push(crate::aircraft::Receiver::new(initial_uuid.clone(), addr.clone(), now));
                 handle_feeder(socket, store.clone(), channels.clone(), initial_uuid.clone()).await;
                 warn!("upstream disconnected: {}", addr);
