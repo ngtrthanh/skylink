@@ -12,6 +12,7 @@ use crate::output::OutputChannels;
 pub struct BeastFrame {
     pub signal: u8,
     pub payload: Vec<u8>,
+    pub receiver_id: Option<u64>,
 }
 
 /// Format a u64 receiver ID as UUID-style hex string (readsb format)
@@ -24,11 +25,11 @@ fn format_receiver_id(id: u64) -> String {
 }
 
 /// Extract Beast frames from buffer, also parsing 0x1a 0xe3 receiver ID messages.
-/// Returns (frames, bytes_consumed, Option<new_receiver_id>).
-pub fn extract_frames(buf: &[u8]) -> (Vec<BeastFrame>, usize, Option<u64>) {
+/// Each frame carries the most recent receiver_id seen before it.
+pub fn extract_frames(buf: &[u8]) -> (Vec<BeastFrame>, usize) {
     let mut frames = Vec::new();
     let mut pos = 0;
-    let mut receiver_id: Option<u64> = None;
+    let mut current_rid: Option<u64> = None;
 
     while pos < buf.len() {
         if buf[pos] != 0x1a { pos += 1; continue; }
@@ -53,7 +54,7 @@ pub fn extract_frames(buf: &[u8]) -> (Vec<BeastFrame>, usize, Option<u64>) {
                 rid = rid << 8 | (b as u64);
             }
             if !ok { pos = start; break; }
-            if rid != 0 { receiver_id = Some(rid); }
+            if rid != 0 { current_rid = Some(rid); }
             continue;
         }
 
@@ -91,9 +92,9 @@ pub fn extract_frames(buf: &[u8]) -> (Vec<BeastFrame>, usize, Option<u64>) {
         }
         if !pay_ok { pos = start; break; }
 
-        frames.push(BeastFrame { signal, payload });
+        frames.push(BeastFrame { signal, payload, receiver_id: current_rid });
     }
-    (frames, pos, receiver_id)
+    (frames, pos)
 }
 
 pub async fn serve_ingest(store: Arc<Store>, channels: Arc<OutputChannels>, port: u16) {
@@ -150,10 +151,7 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
     let mut buf = vec![0u8; 64 * 1024];
     let mut carry = Vec::new();
     let addr = { store.clients.read().iter().find(|r| r.uuid == initial_uuid).map(|r| r.addr.clone()).unwrap_or_default() };
-    let mut current_rid: Option<u64> = None;
-    // Track all receiver IDs seen on this connection (for cleanup on disconnect)
     let mut seen_uuids: Vec<String> = vec![initial_uuid.clone()];
-    let mut current_uuid = initial_uuid;
 
     loop {
         let n = match socket.read(&mut buf).await {
@@ -167,30 +165,31 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
         data.extend_from_slice(&carry);
         data.extend_from_slice(&buf[..n]);
 
-        let (frames, consumed, new_rid) = extract_frames(&data);
+        let (frames, consumed) = extract_frames(&data);
         carry = data[consumed..].to_vec();
 
-        // If we got a receiver ID from the stream, switch to that receiver
-        if let Some(rid) = new_rid {
-            if current_rid != Some(rid) {
-                current_rid = Some(rid);
-                let new_uuid = format_receiver_id(rid);
-                if new_uuid != current_uuid {
-                    // Ensure a Receiver entry exists for this UUID
-                    let mut receivers = store.clients.write();
-                    if !receivers.iter().any(|r| r.uuid == new_uuid) {
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
-                        receivers.push(crate::aircraft::Receiver::new(new_uuid.clone(), addr.clone(), now));
-                        info!("feeder {} new receiver ID: {}", addr, new_uuid);
-                        seen_uuids.push(new_uuid.clone());
-                    }
-                    current_uuid = new_uuid;
-                }
-            }
-        }
+        // Process frames, tracking positions per receiver ID
+        let mut pos_by_uuid: Vec<(String, Vec<(f64, f64)>)> = Vec::new();
 
-        let mut positions: Vec<(f64, f64)> = Vec::new();
         for frame in frames {
+            // Resolve which receiver UUID this frame belongs to
+            let frame_uuid = match frame.receiver_id {
+                Some(rid) => {
+                    let uuid = format_receiver_id(rid);
+                    // Ensure receiver entry exists
+                    {
+                        let mut receivers = store.clients.write();
+                        if !receivers.iter().any(|r| r.uuid == uuid) {
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+                            receivers.push(crate::aircraft::Receiver::new(uuid.clone(), addr.clone(), now));
+                            seen_uuids.push(uuid.clone());
+                        }
+                    }
+                    uuid
+                }
+                None => initial_uuid.clone(),
+            };
+
             if let Some(msg) = mode_s::decode(&frame.payload) {
                 let raw_line = frame.payload.iter()
                     .map(|b| format!("{:02X}", b))
@@ -202,18 +201,26 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
                 if had_pos {
                     if let Some(entry) = store.map.get(&msg.icao) {
                         if let (Some(lat), Some(lon)) = (entry.value().lat, entry.value().lon) {
-                            positions.push((lat, lon));
+                            // Group position by receiver UUID
+                            if let Some(entry) = pos_by_uuid.iter_mut().find(|(u, _)| *u == frame_uuid) {
+                                entry.1.push((lat, lon));
+                            } else {
+                                pos_by_uuid.push((frame_uuid.clone(), vec![(lat, lon)]));
+                            }
                         }
                     }
                 }
             }
         }
 
-        if !positions.is_empty() {
+        // Batch-update receiver stats
+        if !pos_by_uuid.is_empty() {
             let mut receivers = store.clients.write();
-            if let Some(r) = receivers.iter_mut().find(|r| r.uuid == current_uuid) {
-                for (lat, lon) in &positions {
-                    r.record_position(*lat, *lon);
+            for (uuid, positions) in &pos_by_uuid {
+                if let Some(r) = receivers.iter_mut().find(|r| r.uuid == *uuid) {
+                    for (lat, lon) in positions {
+                        r.record_position(*lat, *lon);
+                    }
                 }
             }
         }
