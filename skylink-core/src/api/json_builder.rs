@@ -39,5 +39,12 @@ pub async fn run(store: Arc<Store>) {
         let gj = crate::geojson::build(&store);
         *store.geojson_zstd_cache.write() = bytes::Bytes::from(zstd3(&gj));
         *store.geojson_cache.write() = bytes::Bytes::from(gj);
+
+        // Rebuild receivers cache from connected clients
+        let clients = store.clients.read().clone();
+        let rcv: Vec<serde_json::Value> = clients.iter().enumerate().map(|(i, c)| {
+            serde_json::json!({ "uid": format!("feeder-{i}"), "addr": c.addr, "connected": c.connected_at })
+        }).collect();
+        *store.receivers_cache.write() = bytes::Bytes::from(serde_json::to_vec(&rcv).unwrap_or_default());
     }
 }

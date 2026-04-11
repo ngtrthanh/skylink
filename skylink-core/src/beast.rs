@@ -82,9 +82,13 @@ pub async fn serve_ingest(store: Arc<Store>, channels: Arc<OutputChannels>, port
         };
         let store = store.clone();
         let ch = channels.clone();
+        let addr_str = addr.to_string();
         tokio::spawn(async move {
             info!("feeder connected: {}", addr);
-            handle_feeder(socket, store, ch).await;
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+            store.clients.write().push(crate::aircraft::ClientInfo { addr: addr_str.clone(), connected_at: now, messages: 0 });
+            handle_feeder(socket, store.clone(), ch).await;
+            store.clients.write().retain(|c| c.addr != addr_str);
             info!("feeder disconnected: {}", addr);
         });
     }
@@ -96,7 +100,10 @@ async fn connect_upstream(store: Arc<Store>, channels: Arc<OutputChannels>, addr
         match tokio::net::TcpStream::connect(&addr).await {
             Ok(socket) => {
                 info!("upstream connected: {}", addr);
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+                store.clients.write().push(crate::aircraft::ClientInfo { addr: addr.clone(), connected_at: now, messages: 0 });
                 handle_feeder(socket, store.clone(), channels.clone()).await;
+                store.clients.write().retain(|c| c.addr != addr);
                 warn!("upstream disconnected: {}", addr);
             }
             Err(e) => warn!("upstream connect failed: {} — {}", addr, e),
