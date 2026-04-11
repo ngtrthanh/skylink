@@ -328,7 +328,7 @@ impl VesselStore {
         let mut first = true;
         for entry in self.map.iter() {
             let v = entry.value();
-            if now - v.last_signal > 600.0 { continue; }
+            if now - v.last_signal > 1800.0 { continue; }
             if !first { out.push(','); }
             first = false;
             vessel_json(v, &mut out, now);
@@ -344,7 +344,7 @@ impl VesselStore {
         let mut first = true;
         for entry in self.map.iter() {
             let v = entry.value();
-            if now - v.last_signal > 600.0 { continue; }
+            if now - v.last_signal > 1800.0 { continue; }
             let (lat, lon) = match (v.lat, v.lon) { (Some(a), Some(b)) => (a, b), _ => continue };
             if !first { out.push(','); }
             first = false;
@@ -361,7 +361,7 @@ impl VesselStore {
         let mut first = true;
         for entry in self.map.iter() {
             let v = entry.value();
-            if now - v.last_signal > 600.0 { continue; }
+            if now - v.last_signal > 1800.0 { continue; }
             let (lat, lon) = match (v.lat, v.lon) { (Some(a), Some(b)) => (a as f64, b as f64), _ => continue };
             if lat < south || lat > north { continue; }
             let lon_ok = if west <= east { lon >= west && lon <= east } else { lon >= west || lon <= east };
@@ -411,7 +411,7 @@ impl VesselStore {
         let mut first = true;
         for entry in self.map.iter() {
             let v = entry.value();
-            if now - v.last_signal > 600.0 || v.path.len < 2 { continue; }
+            if now - v.last_signal > 1800.0 || v.path.len < 2 { continue; }
             if !first { out.push(','); }
             first = false;
             out.push_str(&format!("{{\"type\":\"Feature\",\"geometry\":{{\"type\":\"LineString\",\"coordinates\":["));

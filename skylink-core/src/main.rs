@@ -74,10 +74,12 @@ async fn main() {
             }
         }
 
-        let s = store.clone();
-        let host = cfg.ais.nmea_host.clone();
-        let tx = nmea_tx.clone();
-        tokio::spawn(async move { ais::ingest(s, host, tx).await; });
+        // Support multiple NMEA sources separated by semicolons
+        for host in cfg.ais.nmea_host.split(';').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+            let s = store.clone();
+            let tx = nmea_tx.clone();
+            tokio::spawn(async move { ais::ingest(s, host, tx).await; });
+        }
 
         let s = store.clone();
         tokio::spawn(async move { ais::vessel::cache_loop(s).await; });
