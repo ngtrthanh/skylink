@@ -11,7 +11,11 @@ impl NmeaCollector {
 
     /// Feed a raw NMEA line. Returns Some(payload_bits) when a complete message is ready.
     pub fn feed(&mut self, line: &str) -> Option<Vec<u8>> {
-        let line = line.trim();
+        // Strip metadata prefix (e.g. \s:2573565,c:1775888244*07\!BSVDM,...)
+        let line = match line.trim().rfind('!') {
+            Some(i) => &line.trim()[i..],
+            None => return None,
+        };
         if !line.starts_with('!') { return None; }
 
         // Verify checksum
@@ -23,9 +27,9 @@ impl NmeaCollector {
         let parts: Vec<&str> = body.split(',').collect();
         if parts.len() < 7 { return None; }
 
-        // parts[0] = AIVDM or AIVDO
+        // Accept AIVDM, AIVDO, BSVDM, BSVDO
         let tag = parts[0];
-        if tag != "AIVDM" && tag != "AIVDO" { return None; }
+        if !tag.ends_with("VDM") && !tag.ends_with("VDO") { return None; }
 
         let frag_count: u8 = parts[1].parse().ok()?;
         let frag_num: u8 = parts[2].parse().ok()?;
