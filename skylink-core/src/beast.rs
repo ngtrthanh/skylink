@@ -123,7 +123,6 @@ pub async fn serve_ingest(store: Arc<Store>, channels: Arc<OutputChannels>, port
             let initial_uuid = format!("feeder-{}", addr_str.replace([':', '.', '[', ']'], "-"));
             store.clients.write().push(crate::aircraft::Receiver::new(initial_uuid.clone(), addr_str.clone(), now));
             handle_feeder(socket, store.clone(), ch, initial_uuid.clone()).await;
-            store.clients.write().retain(|r| r.addr != addr_str);
             info!("feeder disconnected: {}", addr);
         });
     }
@@ -139,7 +138,6 @@ async fn connect_upstream(store: Arc<Store>, channels: Arc<OutputChannels>, addr
                 let initial_uuid = format!("upstream-{}", addr.replace([':', '.', '[', ']'], "-"));
                 store.clients.write().push(crate::aircraft::Receiver::new(initial_uuid.clone(), addr.clone(), now));
                 handle_feeder(socket, store.clone(), channels.clone(), initial_uuid.clone()).await;
-                store.clients.write().retain(|r| r.addr != addr);
                 warn!("upstream disconnected: {}", addr);
             }
             Err(e) => warn!("upstream connect failed: {} — {}", addr, e),
@@ -152,15 +150,17 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
     let mut buf = vec![0u8; 64 * 1024];
     let mut carry = Vec::new();
     let addr = { store.clients.read().iter().find(|r| r.uuid == initial_uuid).map(|r| r.addr.clone()).unwrap_or_default() };
+    let mut current_rid: Option<u64> = None;
+    // Track all receiver IDs seen on this connection (for cleanup on disconnect)
+    let mut seen_uuids: Vec<String> = vec![initial_uuid.clone()];
     let mut current_uuid = initial_uuid;
 
     loop {
         let n = match socket.read(&mut buf).await {
-            Ok(0) | Err(_) => return,
+            Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
 
-        // Forward raw Beast bytes to beast output subscribers
         let _ = channels.beast.send(buf[..n].to_vec());
 
         let mut data = Vec::with_capacity(carry.len() + n);
@@ -170,16 +170,22 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
         let (frames, consumed, new_rid) = extract_frames(&data);
         carry = data[consumed..].to_vec();
 
-        // If we got a receiver ID from the stream, update the UUID
+        // If we got a receiver ID from the stream, switch to that receiver
         if let Some(rid) = new_rid {
-            let new_uuid = format_receiver_id(rid);
-            if new_uuid != current_uuid {
-                let mut receivers = store.clients.write();
-                if let Some(r) = receivers.iter_mut().find(|r| r.uuid == current_uuid) {
-                    info!("feeder {} receiver ID: {}", addr, new_uuid);
-                    r.uuid = new_uuid.clone();
+            if current_rid != Some(rid) {
+                current_rid = Some(rid);
+                let new_uuid = format_receiver_id(rid);
+                if new_uuid != current_uuid {
+                    // Ensure a Receiver entry exists for this UUID
+                    let mut receivers = store.clients.write();
+                    if !receivers.iter().any(|r| r.uuid == new_uuid) {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+                        receivers.push(crate::aircraft::Receiver::new(new_uuid.clone(), addr.clone(), now));
+                        info!("feeder {} new receiver ID: {}", addr, new_uuid);
+                        seen_uuids.push(new_uuid.clone());
+                    }
+                    current_uuid = new_uuid;
                 }
-                current_uuid = new_uuid;
             }
         }
 
@@ -212,4 +218,7 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
             }
         }
     }
+
+    // Cleanup: remove all receiver entries from this connection
+    store.clients.write().retain(|r| !seen_uuids.contains(&r.uuid));
 }
