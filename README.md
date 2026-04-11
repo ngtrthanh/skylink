@@ -1,15 +1,26 @@
-# Skylink Dev
+# Skylink
 
-Development environment for skylink.hpradar.com
+ADS-B + AIS aggregator for [skylink.hpradar.com](https://skylink.hpradar.com)
 
 ## Structure
 
 ```
-docs/       — meeting memos, architecture decisions
-src/        — new frontend (MapLibre GL JS)
-config/     — readsb config experiments
+about/          — project memos, API docs, architecture decisions
+input/          — reference repos (readsb, AIS-catcher, tar1090-fe) — gitignored
+output/         — frontends (skylink-fe MapLibre app)
+skylink-core/   — Rust backend (the product)
+deploy/         — production compose + env config
 ```
 
-## Production
+## Quick Start
 
-Deploy repo: same GitHub repo, `main` branch, `/opt/workspace/deploy/hpradar.com/skylink`
+```bash
+cd deploy
+cp .env.example .env    # edit as needed
+docker compose up -d
+```
+
+## Docs
+
+- [API Reference](about/API.md)
+- [v4.1 Recap](about/MEMO-v4-recap.md)

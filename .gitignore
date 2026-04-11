@@ -1,6 +1,36 @@
-data/
+# Dependencies
 node_modules/
-dist/
-.DS_Store
-readsb
+
+# Rust build
+target/
 skylink-core/target/
+
+# C/C++ build artifacts
+*.o
+*.a
+*.so
+*.d
+
+# Reference repos (keep locally, don't track)
+input/readsb/
+input/readsb-protobuf/
+input/AIS-catcher/
+input/tar1090-fe/
+
+# Frontend submodule
+output/ml_clf_fe/
+
+# Environment & secrets
+.env
+deploy/.env
+
+# Data & state
+data/
+*.state
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+.codex/

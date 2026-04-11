@@ -1,7 +1,8 @@
 services:
   skylink-core:
-    image: skylink-core:v2
+    image: ghcr.io/ngtrthanh/skylink-core:v4.1
     container_name: skylink-core
+    command: ["skylink-core", "--ais"]
     restart: unless-stopped
     init: true
     security_opt:
@@ -12,40 +13,37 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    environment:
-      - RUST_LOG=info
-      - BEAST_CONNECT=skylink:30005
-      - INGEST_PORT=39004
-      - API_PORT=19180
-      - BASE_PORT=39000
+    env_file: .env
+    volumes:
+      - skylink-data:/data
     ports:
-      - "19180:19180"
+      - "${API_PORT:-19180}:19180"
+      - "${INGEST_PORT:-30004}:${INGEST_PORT:-30004}"
       - "39002:39002"
       - "39003:39003"
-      - "39004:39004"
       - "39005:39005"
       - "39006:39006"
       - "39047:39047"
+      - "10111:10111"
     networks:
       - skynet
 
-  skylink-test-fe:
+  skylink-fe:
     image: nginx:alpine
-    container_name: skylink-test-fe
+    container_name: skylink-fe
     restart: unless-stopped
-    security_opt:
-      - apparmor:unconfined
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ../tar1090-fe/html:/var/www/tar1090:ro
-      - ../readsb-protobuf/webapp/src:/var/www/protobuf:ro
+      - ./html:/var/www/skylink:ro
     ports:
-      - "31790:80"
-      - "31791:81"
+      - "${FE_PORT:-41080}:80"
     depends_on:
       - skylink-core
     networks:
       - skynet
+
+volumes:
+  skylink-data:
 
 networks:
   skynet:
