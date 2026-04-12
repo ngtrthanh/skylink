@@ -85,6 +85,10 @@ pub struct Store {
     pub map: DashMap<u32, Aircraft>,
     /// Aircraft database for type lookups
     pub db: crate::db::AircraftDb,
+    /// Receiver location for local CPR
+    pub receiver_lat: f64,
+    pub receiver_lon: f64,
+    pub max_range_m: f64,
     /// Pre-built JSON response — updated every ~1s by json_builder
     pub json_cache: RwLock<bytes::Bytes>,
     /// Pre-built binCraft response — updated every ~1s
@@ -165,11 +169,14 @@ impl Receiver {
 }
 
 impl Store {
-    pub fn new() -> Self {
+    pub fn new(lat: f64, lon: f64, max_range_nm: f64) -> Self {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
         Self {
             map: DashMap::with_capacity(16384),
             db: crate::db::AircraftDb::load(),
+            receiver_lat: lat,
+            receiver_lon: lon,
+            max_range_m: max_range_nm * 1852.0,
             json_cache: RwLock::new(bytes::Bytes::from_static(b"{\"now\":0,\"messages\":0,\"aircraft\":[]}")),
             bincraft_cache: RwLock::new(bytes::Bytes::new()),
             json_zstd_cache: RwLock::new(bytes::Bytes::new()),
@@ -271,30 +278,55 @@ impl Store {
                 ac.cpr_even = Some((lat, lon, t));
             }
 
+            let mut decoded = None;
+
+            // 1) Try global CPR (needs even+odd within 10s)
             if let (Some((elat, elon, et)), Some((olat, olon, ot))) = (ac.cpr_even, ac.cpr_odd) {
                 if (et - ot).abs() < 10.0 {
-                    if let Some((lat, lon)) = cpr_global(elat, elon, olat, olon, ot > et) {
-                        if lat.abs() <= 90.0 && lon.abs() <= 180.0 {
-                            ac.lat = Some((lat * 1e6).round() / 1e6);
-                            ac.lon = Some((lon * 1e6).round() / 1e6);
-                            ac.seen_pos = Some(0.0);
-                            ac.last_pos_update = t;
+                    decoded = cpr_global(elat, elon, olat, olon, ot > et);
+                }
+            }
 
-                            // Record trace point (max 1 per 4s, cap at 1000 points ~1hr)
-                            let dominated = ac.trace.last().map(|p| t - p.ts < 4.0).unwrap_or(false);
-                            if !dominated {
-                                if ac.trace.len() >= 1000 { ac.trace.remove(0); }
-                                ac.trace.push(TracePoint {
-                                    ts: t, lat: ac.lat.unwrap(), lon: ac.lon.unwrap(),
-                                    alt_baro: ac.alt_baro, alt_geom: ac.alt_geom,
-                                    gs: ac.gs, track: ac.track,
-                                    baro_rate: ac.baro_rate, ias: ac.ias,
-                                });
-                            }
-                            if ac.source_type.is_none() {
-                                ac.source_type = Some(if msg.df == 18 { "adsb_other".into() } else { "adsb".into() });
-                            }
-                        }
+            // 2) Fallback: local CPR relative to aircraft's last known position
+            if decoded.is_none() {
+                if let (Some(reflat), Some(reflon)) = (ac.lat, ac.lon) {
+                    if t - ac.last_pos_update < 600.0 {
+                        decoded = cpr_relative(reflat, reflon, lat, lon, odd);
+                    }
+                }
+            }
+
+            // 3) Fallback: local CPR relative to receiver location
+            if decoded.is_none() && self.receiver_lat != 0.0 {
+                decoded = cpr_relative(self.receiver_lat, self.receiver_lon, lat, lon, odd);
+                // Range check against receiver
+                if let Some((dlat, dlon)) = decoded {
+                    if self.max_range_m > 0.0 {
+                        let dist = great_circle(self.receiver_lat, self.receiver_lon, dlat, dlon);
+                        if dist > self.max_range_m { decoded = None; }
+                    }
+                }
+            }
+
+            if let Some((lat, lon)) = decoded {
+                if lat.abs() <= 90.0 && lon.abs() <= 180.0 {
+                    ac.lat = Some((lat * 1e6).round() / 1e6);
+                    ac.lon = Some((lon * 1e6).round() / 1e6);
+                    ac.seen_pos = Some(0.0);
+                    ac.last_pos_update = t;
+
+                    let dominated = ac.trace.last().map(|p| t - p.ts < 4.0).unwrap_or(false);
+                    if !dominated {
+                        if ac.trace.len() >= 1000 { ac.trace.remove(0); }
+                        ac.trace.push(TracePoint {
+                            ts: t, lat: ac.lat.unwrap(), lon: ac.lon.unwrap(),
+                            alt_baro: ac.alt_baro, alt_geom: ac.alt_geom,
+                            gs: ac.gs, track: ac.track,
+                            baro_rate: ac.baro_rate, ias: ac.ias,
+                        });
+                    }
+                    if ac.source_type.is_none() {
+                        ac.source_type = Some(if msg.df == 18 { "adsb_other".into() } else { "adsb".into() });
                     }
                 }
             }
@@ -515,6 +547,39 @@ fn cpr_nl(lat: f64) -> i32 {
     if lat < 86.53536998  { return 3; }
     if lat < 87.00000000  { return 2; }
     1
+}
+
+/// Local CPR decode — single frame relative to a reference point (readsb decodeCPRrelative)
+fn cpr_relative(reflat: f64, reflon: f64, cprlat: u32, cprlon: u32, odd: bool) -> Option<(f64, f64)> {
+    let frac_lat = cprlat as f64 / 131072.0;
+    let frac_lon = cprlon as f64 / 131072.0;
+    let air_dlat = 360.0 / if odd { 59.0 } else { 60.0 };
+
+    let j = (reflat / air_dlat).floor() + (0.5 + fmod(reflat, air_dlat) / air_dlat - frac_lat).floor();
+    let mut rlat = air_dlat * (j + frac_lat);
+    if rlat >= 270.0 { rlat -= 360.0; }
+    if rlat < -90.0 || rlat > 90.0 { return None; }
+    if (rlat - reflat).abs() > air_dlat / 2.0 { return None; }
+
+    let nl = cpr_nl(rlat);
+    let ni = if odd { (nl - 1).max(1) } else { nl.max(1) };
+    let air_dlon = 360.0 / ni as f64;
+    let m = (reflon / air_dlon).floor() + (0.5 + fmod(reflon, air_dlon) / air_dlon - frac_lon).floor();
+    let mut rlon = air_dlon * (m + frac_lon);
+    if rlon > 180.0 { rlon -= 360.0; }
+    if (rlon - reflon).abs() > air_dlon / 2.0 { return None; }
+
+    Some((rlat, rlon))
+}
+
+fn fmod(a: f64, b: f64) -> f64 { a - b * (a / b).floor() }
+
+fn great_circle(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let (lat1, lon1, lat2, lon2) = (lat1.to_radians(), lon1.to_radians(), lat2.to_radians(), lon2.to_radians());
+    let dlat = lat2 - lat1;
+    let dlon = lon2 - lon1;
+    let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+    6371000.0 * 2.0 * a.sqrt().asin() // meters
 }
 
 // --- Reaper ---

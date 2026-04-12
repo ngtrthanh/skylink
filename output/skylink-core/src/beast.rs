@@ -196,6 +196,7 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
     let mut carry = Vec::new();
     let addr = { store.clients.read().iter().find(|r| r.uuid == initial_uuid).map(|r| r.addr.clone()).unwrap_or_default() };
     let mut seen_uuids: Vec<String> = vec![initial_uuid.clone()];
+    let mut hex_buf = String::with_capacity(32);
 
     loop {
         let n = match socket.read(&mut buf).await {
@@ -205,22 +206,20 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
 
         let _ = channels.beast.send(buf[..n].to_vec());
 
-        let mut data = Vec::with_capacity(carry.len() + n);
-        data.extend_from_slice(&carry);
-        data.extend_from_slice(&buf[..n]);
+        // Reuse carry buffer instead of allocating new Vec each time
+        let data_start = carry.len();
+        carry.extend_from_slice(&buf[..n]);
 
-        let (frames, consumed) = extract_frames(&data);
-        carry = data[consumed..].to_vec();
+        let (frames, consumed) = extract_frames(&carry);
+        let remaining = carry[consumed..].to_vec();
+        carry = remaining;
 
-        // Process frames, tracking positions per receiver ID
         let mut pos_by_uuid: Vec<(String, Vec<(f64, f64)>)> = Vec::new();
 
         for frame in frames {
-            // Resolve which receiver UUID this frame belongs to
             let frame_uuid = match frame.receiver_id {
                 Some(rid) => {
                     let uuid = format_receiver_id(rid);
-                    // Ensure receiver entry exists
                     {
                         let mut receivers = store.clients.write();
                         if !receivers.iter().any(|r| r.uuid == uuid) {
@@ -235,17 +234,20 @@ async fn handle_feeder(mut socket: tokio::net::TcpStream, store: Arc<Store>, cha
             };
 
             if let Some(msg) = mode_s::decode(&frame.payload) {
-                let raw_line = frame.payload.iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<String>() + "\n";
-                let _ = channels.raw.send(raw_line.into_bytes());
+                // Reuse hex_buf instead of allocating per frame
+                hex_buf.clear();
+                for b in &frame.payload {
+                    use std::fmt::Write;
+                    let _ = write!(hex_buf, "{:02X}", b);
+                }
+                hex_buf.push('\n');
+                let _ = channels.raw.send(hex_buf.as_bytes().to_vec());
 
                 let had_pos = msg.cpr_lat.is_some() && msg.cpr_lon.is_some();
                 store.update_from_message(&msg, frame.signal);
                 if had_pos {
                     if let Some(entry) = store.map.get(&msg.icao) {
                         if let (Some(lat), Some(lon)) = (entry.value().lat, entry.value().lon) {
-                            // Group position by receiver UUID
                             if let Some(entry) = pos_by_uuid.iter_mut().find(|(u, _)| *u == frame_uuid) {
                                 entry.1.push((lat, lon));
                             } else {

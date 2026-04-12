@@ -31,7 +31,7 @@ async fn main() {
 
     info!("skylink-core v4 starting (adsb={} ais={})", cfg.modules.adsb, cfg.modules.ais);
 
-    let aircraft_store = if cfg.modules.adsb { Some(Arc::new(aircraft::Store::new())) } else { None };
+    let aircraft_store = if cfg.modules.adsb { Some(Arc::new(aircraft::Store::new(cfg.adsb.lat, cfg.adsb.lon, cfg.adsb.max_range))) } else { None };
     let vessel_store = if cfg.modules.ais { Some(Arc::new(ais::vessel::VesselStore::new())) } else { None };
 
     // --- ADS-B module ---

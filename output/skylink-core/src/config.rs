@@ -22,6 +22,9 @@ pub struct Modules {
 pub struct AdsbConfig {
     pub ingest_port: u16,
     pub db: bool,
+    pub lat: f64,
+    pub lon: f64,
+    pub max_range: f64, // nautical miles
 }
 
 #[derive(Deserialize, Clone)]
@@ -55,7 +58,7 @@ impl Default for Modules {
 }
 
 impl Default for AdsbConfig {
-    fn default() -> Self { Self { ingest_port: 39004, db: true } }
+    fn default() -> Self { Self { ingest_port: 39004, db: true, lat: 0.0, lon: 0.0, max_range: 300.0 } }
 }
 
 impl Default for AisConfig {
@@ -97,5 +100,8 @@ impl Config {
         if let Ok(v) = std::env::var("INGEST_PORT") { if let Ok(p) = v.parse() { self.adsb.ingest_port = p; } }
         if let Ok(v) = std::env::var("API_PORT") { if let Ok(p) = v.parse() { self.api.port = p; } }
         if let Ok(v) = std::env::var("NMEA_HOST") { self.ais.nmea_host = v; }
+        if let Ok(v) = std::env::var("LAT") { if let Ok(f) = v.parse() { self.adsb.lat = f; } }
+        if let Ok(v) = std::env::var("LON") { if let Ok(f) = v.parse() { self.adsb.lon = f; } }
+        if let Ok(v) = std::env::var("MAX_RANGE") { if let Ok(f) = v.parse() { self.adsb.max_range = f; } }
     }
 }
