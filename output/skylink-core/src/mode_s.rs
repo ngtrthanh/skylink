@@ -41,6 +41,8 @@ pub struct Message {
     pub nic_baro: Option<u8>,
     pub adsb_version: Option<u8>,
     pub emergency: Option<u8>,
+    pub alert: bool,
+    pub spi: bool,
     pub addr_type: u8, // 0=adsb_icao, 7=mode_s, etc
 }
 
@@ -64,10 +66,12 @@ fn decode_df0(msg: &[u8]) -> Option<Message> {
     Some(Message { df: 0, icao: crc_residual(msg, 7), altitude: decode_ac13(&msg[2..4]), airborne: true, addr_type: 7, ..Message::empty() })
 }
 fn decode_df4(msg: &[u8]) -> Option<Message> {
-    Some(Message { df: 4, icao: crc_residual(msg, 7), altitude: decode_ac13(&msg[2..4]), airborne: true, addr_type: 7, ..Message::empty() })
+    let fs = msg[0] & 0x07;
+    Some(Message { df: 4, icao: crc_residual(msg, 7), altitude: decode_ac13(&msg[2..4]), airborne: true, addr_type: 7, alert: fs == 2 || fs == 4, spi: fs == 4 || fs == 5, ..Message::empty() })
 }
 fn decode_df5(msg: &[u8]) -> Option<Message> {
-    Some(Message { df: 5, icao: crc_residual(msg, 7), squawk: Some(decode_id13(&msg[2..4])), addr_type: 7, ..Message::empty() })
+    let fs = msg[0] & 0x07;
+    Some(Message { df: 5, icao: crc_residual(msg, 7), squawk: Some(decode_id13(&msg[2..4])), addr_type: 7, alert: fs == 2 || fs == 4, spi: fs == 4 || fs == 5, ..Message::empty() })
 }
 fn decode_df11(msg: &[u8]) -> Option<Message> {
     let icao = ((msg[1] as u32) << 16) | ((msg[2] as u32) << 8) | (msg[3] as u32);
@@ -79,13 +83,13 @@ fn decode_df16(msg: &[u8]) -> Option<Message> {
 }
 fn decode_df20(msg: &[u8]) -> Option<Message> {
     if msg.len() < 14 { return None; }
-    let mut m = Message { df: 20, icao: crc_residual(msg, 14), altitude: decode_ac13(&msg[2..4]), airborne: true, addr_type: 7, ..Message::empty() };
+    let mut m = Message { df: 20, icao: crc_residual(msg, 14), altitude: decode_ac13(&msg[2..4]), airborne: true, addr_type: 7, alert: msg[0] & 0x07 == 2 || msg[0] & 0x07 == 4, spi: msg[0] & 0x07 == 4 || msg[0] & 0x07 == 5, ..Message::empty() };
     decode_bds(&msg[4..11], &mut m);
     Some(m)
 }
 fn decode_df21(msg: &[u8]) -> Option<Message> {
     if msg.len() < 14 { return None; }
-    let mut m = Message { df: 21, icao: crc_residual(msg, 14), squawk: Some(decode_id13(&msg[2..4])), addr_type: 7, ..Message::empty() };
+    let mut m = Message { df: 21, icao: crc_residual(msg, 14), squawk: Some(decode_id13(&msg[2..4])), addr_type: 7, alert: msg[0] & 0x07 == 2 || msg[0] & 0x07 == 4, spi: msg[0] & 0x07 == 4 || msg[0] & 0x07 == 5, ..Message::empty() };
     decode_bds(&msg[4..11], &mut m);
     Some(m)
 }
@@ -348,7 +352,7 @@ impl Message {
             nav_heading: None, nav_modes: None,
             nic: None, nac_p: None, nac_v: None, sil: None, sil_type: None,
             gva: None, sda: None, nic_baro: None, adsb_version: None,
-            emergency: None, addr_type: 0,
+            emergency: None, alert: false, spi: false, addr_type: 0,
         }
     }
 }

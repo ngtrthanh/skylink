@@ -55,6 +55,9 @@ pub struct Aircraft {
     #[serde(skip_serializing_if = "Option::is_none")] pub nic_baro: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")] pub adsb_version: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")] pub nav_modes: Option<u8>,
+    pub alert: bool,
+    pub spi: bool,
+    #[serde(skip_serializing_if = "Option::is_none")] pub dbFlags: Option<u16>,
     #[serde(skip)] pub addr_type: u8,
     /// Type designator from aircraft DB (e.g. "B738", "A320")
     #[serde(skip_serializing_if = "Option::is_none")] pub r: Option<String>,
@@ -224,6 +227,7 @@ impl Store {
             nav_heading: None, emergency: None, nav_modes: None,
             nic: None, nac_p: None, nac_v: None, sil: None, sil_type: None,
             gva: None, sda: None, nic_baro: None, adsb_version: None,
+            alert: false, spi: false, dbFlags: None,
             addr_type: 0,
             r: r_val, t: t_val, desc: desc_val, wtc: wtc_val,
             cpr_even: None, cpr_odd: None, last_update: t, last_pos_update: 0.0,
@@ -270,6 +274,8 @@ impl Store {
         if let Some(v) = msg.nic_baro { ac.nic_baro = Some(v); }
         if let Some(v) = msg.adsb_version { ac.adsb_version = Some(v); }
         if let Some(v) = msg.nav_modes { ac.nav_modes = Some(v); }
+        if msg.alert { ac.alert = true; }
+        if msg.spi { ac.spi = true; }
         ac.addr_type = msg.addr_type;
 
         // CPR position decode
@@ -389,13 +395,36 @@ impl Store {
             if let Some(v) = ac.nav_altitude_fms { buf.push(b','); write_int(&mut buf, "nav_altitude_fms", v as i32); }
             if let Some(v) = ac.nav_qnh { buf.push(b','); write_float(&mut buf, "nav_qnh", v); }
             if let Some(v) = ac.nav_heading { buf.push(b','); write_float(&mut buf, "nav_heading", v); }
-            if let Some(v) = ac.emergency { buf.push(b','); write_int(&mut buf, "emergency", v as i32); }
+            if let Some(v) = ac.nav_modes {
+                buf.extend_from_slice(b",\"nav_modes\":[");
+                let mut nf = false;
+                if v & 0x01 != 0 { buf.extend_from_slice(b"\"autopilot\""); nf = true; }
+                if v & 0x02 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"vnav\""); nf = true; }
+                if v & 0x04 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"althold\""); nf = true; }
+                if v & 0x08 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"approach\""); nf = true; }
+                if v & 0x10 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"lnav\""); nf = true; }
+                if v & 0x20 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"tcas\""); }
+                buf.push(b']');
+            }
+            if let Some(v) = ac.emergency { buf.push(b','); write_str(&mut buf, "emergency", match v { 0 => "none", 1 => "general", 2 => "lifeguard", 3 => "minfuel", 4 => "nordo", 5 => "unlawful", 6 => "downed", _ => "none" }); }
             if let Some(v) = ac.nic { buf.push(b','); write_int(&mut buf, "nic", v as i32); }
+            if let Some(v) = ac.nic {
+                // rc (containment radius) from NIC
+                let rc = match v { 11 => 7, 10 => 25, 9 => 75, 8 => 186, 7 => 370, 6 => 1852, 5 => 3704, 4 => 7408, 3 => 14816, 2 => 37040, 1 => 185200, _ => 0 };
+                if rc > 0 { buf.push(b','); write_int(&mut buf, "rc", rc); }
+            }
             if let Some(v) = ac.nac_p { buf.push(b','); write_int(&mut buf, "nac_p", v as i32); }
             if let Some(v) = ac.nac_v { buf.push(b','); write_int(&mut buf, "nac_v", v as i32); }
             if let Some(v) = ac.sil { buf.push(b','); write_int(&mut buf, "sil", v as i32); }
+            if let Some(v) = ac.sil_type { buf.push(b','); write_str(&mut buf, "sil_type", match v { 1 => "perhour", 2 => "persample", 3 => "persecond", _ => "unknown" }); }
             if let Some(v) = ac.gva { buf.push(b','); write_int(&mut buf, "gva", v as i32); }
             if let Some(v) = ac.sda { buf.push(b','); write_int(&mut buf, "sda", v as i32); }
+            if let Some(v) = ac.nic_baro { buf.push(b','); write_int(&mut buf, "nic_baro", v as i32); }
+            if ac.alert { buf.extend_from_slice(b",\"alert\":1"); }
+            if ac.spi { buf.extend_from_slice(b",\"spi\":1"); }
+            buf.extend_from_slice(b",\"mlat\":[],\"tisb\":[]");
+            if let Some(ref v) = ac.r { buf.push(b','); write_str(&mut buf, "r", v); }
+            if let Some(ref v) = ac.t { buf.push(b','); write_str(&mut buf, "t", v); }
             if let Some(v) = ac.adsb_version { buf.push(b','); write_int(&mut buf, "version", v as i32); }
             buf.push(b','); write_float(&mut buf, "seen", t - ac.last_update);
             if let Some(v) = ac.rssi { buf.push(b','); write_float(&mut buf, "rssi", v); }
