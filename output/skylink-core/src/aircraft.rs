@@ -367,74 +367,7 @@ impl Store {
             if !first { buf.push(b','); }
             first = false;
 
-            // Manual JSON — faster than serde for hot path
-            buf.push(b'{');
-            write_str(&mut buf, "hex", &ac.hex);
-            if let Some(ref f) = ac.flight { buf.push(b','); write_str(&mut buf, "flight", f); }
-            if ac.on_ground {
-                buf.extend_from_slice(b",\"alt_baro\":\"ground\"");
-            } else if let Some(v) = ac.alt_baro { buf.push(b','); write_int(&mut buf, "alt_baro", v); }
-            if let Some(v) = ac.alt_geom { buf.push(b','); write_int(&mut buf, "alt_geom", v); }
-            if let Some(v) = ac.gs { buf.push(b','); write_float(&mut buf, "gs", v); }
-            if let Some(v) = ac.track { buf.push(b','); write_float(&mut buf, "track", v); }
-            if let Some(v) = ac.baro_rate { buf.push(b','); write_int(&mut buf, "baro_rate", v); }
-            if let Some(v) = ac.geom_rate { buf.push(b','); write_int(&mut buf, "geom_rate", v); }
-            if let Some(ref v) = ac.squawk { buf.push(b','); write_str(&mut buf, "squawk", v); }
-            if let Some(ref v) = ac.category { buf.push(b','); write_str(&mut buf, "category", v); }
-            if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
-                if ac.last_pos_update > 0.0 && (t - ac.last_pos_update) < 60.0 {
-                    buf.push(b','); write_float(&mut buf, "lat", lat);
-                    buf.push(b','); write_float(&mut buf, "lon", lon);
-                    if let Some(ref v) = ac.source_type { buf.push(b','); write_str(&mut buf, "type", v); }
-                    buf.push(b','); write_float(&mut buf, "seen_pos", t - ac.last_pos_update);
-                }
-            }
-            if let Some(v) = ac.ias { buf.push(b','); write_int(&mut buf, "ias", v as i32); }
-            if let Some(v) = ac.tas { buf.push(b','); write_int(&mut buf, "tas", v as i32); }
-            if let Some(v) = ac.mach { buf.push(b','); write_float(&mut buf, "mach", v); }
-            if let Some(v) = ac.mag_heading { buf.push(b','); write_float(&mut buf, "mag_heading", v); }
-            if let Some(v) = ac.true_heading { buf.push(b','); write_float(&mut buf, "true_heading", v); }
-            if let Some(v) = ac.roll { buf.push(b','); write_float(&mut buf, "roll", v); }
-            if let Some(v) = ac.track_rate { buf.push(b','); write_float(&mut buf, "track_rate", v); }
-            if let Some(v) = ac.nav_altitude_mcp { buf.push(b','); write_int(&mut buf, "nav_altitude_mcp", v as i32); }
-            if let Some(v) = ac.nav_altitude_fms { buf.push(b','); write_int(&mut buf, "nav_altitude_fms", v as i32); }
-            if let Some(v) = ac.nav_qnh { buf.push(b','); write_float(&mut buf, "nav_qnh", v); }
-            if let Some(v) = ac.nav_heading { buf.push(b','); write_float(&mut buf, "nav_heading", v); }
-            if let Some(v) = ac.nav_modes {
-                buf.extend_from_slice(b",\"nav_modes\":[");
-                let mut nf = false;
-                if v & 0x01 != 0 { buf.extend_from_slice(b"\"autopilot\""); nf = true; }
-                if v & 0x02 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"vnav\""); nf = true; }
-                if v & 0x04 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"althold\""); nf = true; }
-                if v & 0x08 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"approach\""); nf = true; }
-                if v & 0x10 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"lnav\""); nf = true; }
-                if v & 0x20 != 0 { if nf { buf.push(b','); } buf.extend_from_slice(b"\"tcas\""); }
-                buf.push(b']');
-            }
-            if let Some(v) = ac.emergency { buf.push(b','); write_str(&mut buf, "emergency", match v { 0 => "none", 1 => "general", 2 => "lifeguard", 3 => "minfuel", 4 => "nordo", 5 => "unlawful", 6 => "downed", _ => "none" }); }
-            if let Some(v) = ac.nic { buf.push(b','); write_int(&mut buf, "nic", v as i32); }
-            if let Some(v) = ac.nic {
-                // rc (containment radius) from NIC
-                let rc = match v { 11 => 7, 10 => 25, 9 => 75, 8 => 186, 7 => 370, 6 => 1852, 5 => 3704, 4 => 7408, 3 => 14816, 2 => 37040, 1 => 185200, _ => 0 };
-                if rc > 0 { buf.push(b','); write_int(&mut buf, "rc", rc); }
-            }
-            if let Some(v) = ac.nac_p { buf.push(b','); write_int(&mut buf, "nac_p", v as i32); }
-            if let Some(v) = ac.nac_v { buf.push(b','); write_int(&mut buf, "nac_v", v as i32); }
-            if let Some(v) = ac.sil { buf.push(b','); write_int(&mut buf, "sil", v as i32); }
-            if let Some(v) = ac.sil_type { buf.push(b','); write_str(&mut buf, "sil_type", match v { 1 => "perhour", 2 => "persample", 3 => "persecond", _ => "unknown" }); }
-            if let Some(v) = ac.gva { buf.push(b','); write_int(&mut buf, "gva", v as i32); }
-            if let Some(v) = ac.sda { buf.push(b','); write_int(&mut buf, "sda", v as i32); }
-            if let Some(v) = ac.nic_baro { buf.push(b','); write_int(&mut buf, "nic_baro", v as i32); }
-            if ac.alert { buf.extend_from_slice(b",\"alert\":1"); }
-            if ac.spi { buf.extend_from_slice(b",\"spi\":1"); }
-            buf.extend_from_slice(b",\"mlat\":[],\"tisb\":[]");
-            if let Some(ref v) = ac.r { buf.push(b','); write_str(&mut buf, "r", v); }
-            if let Some(ref v) = ac.t { buf.push(b','); write_str(&mut buf, "t", v); }
-            if let Some(v) = ac.adsb_version { buf.push(b','); write_int(&mut buf, "version", v as i32); }
-            buf.push(b','); write_float(&mut buf, "seen", t - ac.last_update);
-            if let Some(v) = ac.rssi { buf.push(b','); write_float(&mut buf, "rssi", v); }
-            buf.push(b','); write_u64(&mut buf, "messages", ac.messages);
-            buf.push(b'}');
+            aircraft_json_t3(ac, &mut buf, t);
         }
 
         buf.extend_from_slice(b"]}");
@@ -493,7 +426,7 @@ pub fn build_json_filtered(store: &Store, south: f64, north: f64, west: f64, eas
                 match tier {
                     1 => aircraft_json_t1(ac, &mut buf, t),
                     2 => aircraft_json_t2(ac, &mut buf, t),
-                    _ => buf.extend_from_slice(&serde_json::to_vec(ac).unwrap_or_default()),
+                    _ => aircraft_json_t3(ac, &mut buf, t),
                 }
             }
         }
@@ -568,6 +501,75 @@ fn aircraft_json_t2(ac: &Aircraft, t2: &mut Vec<u8>, t: f64) {
     t2.push(b'}');
 }
 
+
+fn aircraft_json_t3(ac: &Aircraft, t3: &mut Vec<u8>, t: f64) {
+    t3.push(b'{');
+    write_str(t3, "hex", &ac.hex);
+    if let Some(ref f) = ac.flight { t3.push(b','); write_str(t3, "flight", f); }
+    if ac.on_ground {
+        t3.extend_from_slice(b",\"alt_baro\":\"ground\"");
+    } else if let Some(v) = ac.alt_baro { t3.push(b','); write_int(t3, "alt_baro", v); }
+    if let Some(v) = ac.alt_geom { t3.push(b','); write_int(t3, "alt_geom", v); }
+    if let Some(v) = ac.gs { t3.push(b','); write_float(t3, "gs", v); }
+    if let Some(v) = ac.track { t3.push(b','); write_float(t3, "track", v); }
+    if let Some(v) = ac.baro_rate { t3.push(b','); write_int(t3, "baro_rate", v); }
+    if let Some(v) = ac.geom_rate { t3.push(b','); write_int(t3, "geom_rate", v); }
+    if let Some(ref v) = ac.squawk { t3.push(b','); write_str(t3, "squawk", v); }
+    if let Some(ref v) = ac.category { t3.push(b','); write_str(t3, "category", v); }
+    if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
+        if ac.last_pos_update > 0.0 && (t - ac.last_pos_update) < 60.0 {
+            t3.push(b','); write_float(t3, "lat", lat);
+            t3.push(b','); write_float(t3, "lon", lon);
+            if let Some(ref v) = ac.source_type { t3.push(b','); write_str(t3, "type", v); }
+            t3.push(b','); write_float(t3, "seen_pos", t - ac.last_pos_update);
+        }
+    }
+    if let Some(v) = ac.ias { t3.push(b','); write_int(t3, "ias", v as i32); }
+    if let Some(v) = ac.tas { t3.push(b','); write_int(t3, "tas", v as i32); }
+    if let Some(v) = ac.mach { t3.push(b','); write_float(t3, "mach", v); }
+    if let Some(v) = ac.mag_heading { t3.push(b','); write_float(t3, "mag_heading", v); }
+    if let Some(v) = ac.true_heading { t3.push(b','); write_float(t3, "true_heading", v); }
+    if let Some(v) = ac.roll { t3.push(b','); write_float(t3, "roll", v); }
+    if let Some(v) = ac.track_rate { t3.push(b','); write_float(t3, "track_rate", v); }
+    if let Some(v) = ac.nav_altitude_mcp { t3.push(b','); write_int(t3, "nav_altitude_mcp", v as i32); }
+    if let Some(v) = ac.nav_altitude_fms { t3.push(b','); write_int(t3, "nav_altitude_fms", v as i32); }
+    if let Some(v) = ac.nav_qnh { t3.push(b','); write_float(t3, "nav_qnh", v); }
+    if let Some(v) = ac.nav_heading { t3.push(b','); write_float(t3, "nav_heading", v); }
+    if let Some(v) = ac.nav_modes {
+        t3.extend_from_slice(b",\"nav_modes\":[");
+        let mut nf = false;
+        if v & 0x01 != 0 { t3.extend_from_slice(b"\"autopilot\""); nf = true; }
+        if v & 0x02 != 0 { if nf { t3.push(b','); } t3.extend_from_slice(b"\"vnav\""); nf = true; }
+        if v & 0x04 != 0 { if nf { t3.push(b','); } t3.extend_from_slice(b"\"althold\""); nf = true; }
+        if v & 0x08 != 0 { if nf { t3.push(b','); } t3.extend_from_slice(b"\"approach\""); nf = true; }
+        if v & 0x10 != 0 { if nf { t3.push(b','); } t3.extend_from_slice(b"\"lnav\""); nf = true; }
+        if v & 0x20 != 0 { if nf { t3.push(b','); } t3.extend_from_slice(b"\"tcas\""); }
+        t3.push(b']');
+    }
+    if let Some(v) = ac.emergency { t3.push(b','); write_str(t3, "emergency", match v { 0 => "none", 1 => "general", 2 => "lifeguard", 3 => "minfuel", 4 => "nordo", 5 => "unlawful", 6 => "downed", _ => "none" }); }
+    if let Some(v) = ac.nic { t3.push(b','); write_int(t3, "nic", v as i32); }
+    if let Some(v) = ac.nic {
+        let rc = match v { 11 => 7, 10 => 25, 9 => 75, 8 => 186, 7 => 370, 6 => 1852, 5 => 3704, 4 => 7408, 3 => 14816, 2 => 37040, 1 => 185200, _ => 0 };
+        if rc > 0 { t3.push(b','); write_int(t3, "rc", rc); }
+    }
+    if let Some(v) = ac.nac_p { t3.push(b','); write_int(t3, "nac_p", v as i32); }
+    if let Some(v) = ac.nac_v { t3.push(b','); write_int(t3, "nac_v", v as i32); }
+    if let Some(v) = ac.sil { t3.push(b','); write_int(t3, "sil", v as i32); }
+    if let Some(v) = ac.sil_type { t3.push(b','); write_str(t3, "sil_type", match v { 1 => "perhour", 2 => "persample", 3 => "persecond", _ => "unknown" }); }
+    if let Some(v) = ac.gva { t3.push(b','); write_int(t3, "gva", v as i32); }
+    if let Some(v) = ac.sda { t3.push(b','); write_int(t3, "sda", v as i32); }
+    if let Some(v) = ac.nic_baro { t3.push(b','); write_int(t3, "nic_baro", v as i32); }
+    if ac.alert { t3.extend_from_slice(b",\"alert\":1"); }
+    if ac.spi { t3.extend_from_slice(b",\"spi\":1"); }
+    t3.extend_from_slice(b",\"mlat\":[],\"tisb\":[]");
+    if let Some(ref v) = ac.r { t3.push(b','); write_str(t3, "r", v); }
+    if let Some(ref v) = ac.t { t3.push(b','); write_str(t3, "t", v); }
+    if let Some(v) = ac.adsb_version { t3.push(b','); write_int(t3, "version", v as i32); }
+    t3.push(b','); write_float(t3, "seen", t - ac.last_update);
+    if let Some(v) = ac.rssi { t3.push(b','); write_float(t3, "rssi", v); }
+    t3.push(b','); write_u64(t3, "messages", ac.messages);
+    t3.push(b'}');
+}
 
 // --- CPR global decode ---
 fn cpr_global(elat: u32, elon: u32, olat: u32, olon: u32, odd_recent: bool, surface: bool) -> Option<(f64, f64)> {
