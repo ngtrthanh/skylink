@@ -18,6 +18,7 @@ pub struct Aircraft {
     pub hex: String,
     #[serde(skip_serializing_if = "Option::is_none")] pub flight: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] pub alt_baro: Option<i32>,
+    pub on_ground: bool,
     #[serde(skip_serializing_if = "Option::is_none")] pub alt_geom: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")] pub gs: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")] pub track: Option<f64>,
@@ -213,7 +214,7 @@ impl Store {
 
         let mut entry = self.map.entry(msg.icao).or_insert_with(|| Aircraft {
             hex: hex_str,
-            flight: None, alt_baro: None, alt_geom: None, gs: None, track: None,
+            flight: None, alt_baro: None, on_ground: false, alt_geom: None, gs: None, track: None,
             baro_rate: None, geom_rate: None, squawk: None, category: None,
             lat: None, lon: None, seen_pos: None, seen: 0.0, rssi: None,
             messages: 0, source_type: None,
@@ -235,6 +236,7 @@ impl Store {
         ac.rssi = Some(10.0 * ((signal as f64 / 255.0).powi(2) + 1e-12).log10());
 
         if let Some(alt) = msg.altitude { ac.alt_baro = Some(alt); }
+        if !msg.airborne { ac.on_ground = true; }
         if let Some(alt) = msg.alt_gnss { ac.alt_geom = Some(alt); }
         if let Some(gs) = msg.ground_speed { ac.gs = Some((gs * 10.0).round() / 10.0); }
         if let Some(trk) = msg.ground_track { ac.track = Some((trk * 10.0).round() / 10.0); }
@@ -272,6 +274,7 @@ impl Store {
 
         // CPR position decode
         if let (Some(lat), Some(lon), Some(odd)) = (msg.cpr_lat, msg.cpr_lon, msg.cpr_odd) {
+            let surface = !msg.airborne;
             if odd {
                 ac.cpr_odd = Some((lat, lon, t));
             } else {
@@ -283,7 +286,7 @@ impl Store {
             // 1) Try global CPR (needs even+odd within 10s)
             if let (Some((elat, elon, et)), Some((olat, olon, ot))) = (ac.cpr_even, ac.cpr_odd) {
                 if (et - ot).abs() < 10.0 {
-                    decoded = cpr_global(elat, elon, olat, olon, ot > et);
+                    decoded = cpr_global(elat, elon, olat, olon, ot > et, surface);
                 }
             }
 
@@ -291,15 +294,14 @@ impl Store {
             if decoded.is_none() {
                 if let (Some(reflat), Some(reflon)) = (ac.lat, ac.lon) {
                     if t - ac.last_pos_update < 600.0 {
-                        decoded = cpr_relative(reflat, reflon, lat, lon, odd);
+                        decoded = cpr_relative(reflat, reflon, lat, lon, odd, surface);
                     }
                 }
             }
 
             // 3) Fallback: local CPR relative to receiver location
             if decoded.is_none() && self.receiver_lat != 0.0 {
-                decoded = cpr_relative(self.receiver_lat, self.receiver_lon, lat, lon, odd);
-                // Range check against receiver
+                decoded = cpr_relative(self.receiver_lat, self.receiver_lon, lat, lon, odd, surface);
                 if let Some((dlat, dlon)) = decoded {
                     if self.max_range_m > 0.0 {
                         let dist = great_circle(self.receiver_lat, self.receiver_lon, dlat, dlon);
@@ -358,7 +360,9 @@ impl Store {
             buf.push(b'{');
             write_str(&mut buf, "hex", &ac.hex);
             if let Some(ref f) = ac.flight { buf.push(b','); write_str(&mut buf, "flight", f); }
-            if let Some(v) = ac.alt_baro { buf.push(b','); write_int(&mut buf, "alt_baro", v); }
+            if ac.on_ground {
+                buf.extend_from_slice(b",\"alt_baro\":\"ground\"");
+            } else if let Some(v) = ac.alt_baro { buf.push(b','); write_int(&mut buf, "alt_baro", v); }
             if let Some(v) = ac.alt_geom { buf.push(b','); write_int(&mut buf, "alt_geom", v); }
             if let Some(v) = ac.gs { buf.push(b','); write_float(&mut buf, "gs", v); }
             if let Some(v) = ac.track { buf.push(b','); write_float(&mut buf, "track", v); }
@@ -450,29 +454,27 @@ fn write_float(buf: &mut Vec<u8>, key: &str, val: f64) {
 }
 
 // --- CPR global decode ---
-fn cpr_global(elat: u32, elon: u32, olat: u32, olon: u32, odd_recent: bool) -> Option<(f64, f64)> {
+fn cpr_global(elat: u32, elon: u32, olat: u32, olon: u32, odd_recent: bool, surface: bool) -> Option<(f64, f64)> {
+    let scale = if surface { 90.0 } else { 360.0 };
     let lat0 = elat as f64 / 131072.0;
     let lat1 = olat as f64 / 131072.0;
     let lon0 = elon as f64 / 131072.0;
     let lon1 = olon as f64 / 131072.0;
 
-    // Latitude
     let j = (59.0 * lat0 - 60.0 * lat1 + 0.5).floor() as i32;
-    let mut rlat0 = (360.0 / 60.0) * (cpr_mod(j, 60) as f64 + lat0);
-    let mut rlat1 = (360.0 / 59.0) * (cpr_mod(j, 59) as f64 + lat1);
+    let mut rlat0 = (scale / 60.0) * (cpr_mod(j, 60) as f64 + lat0);
+    let mut rlat1 = (scale / 59.0) * (cpr_mod(j, 59) as f64 + lat1);
     if rlat0 >= 270.0 { rlat0 -= 360.0; }
     if rlat1 >= 270.0 { rlat1 -= 360.0; }
 
-    // Check NL consistency
     let nl0 = cpr_nl(rlat0);
     let nl1 = cpr_nl(rlat1);
     if nl0 != nl1 { return None; }
 
-    // Longitude — ni depends on which frame is most recent
     let rlat = if odd_recent { rlat1 } else { rlat0 };
     let nl = cpr_nl(rlat);
     let ni = if odd_recent { (nl - 1).max(1) } else { nl.max(1) };
-    let dlon = 360.0 / ni as f64;
+    let dlon = scale / ni as f64;
     let m = (lon0 * (nl as f64 - 1.0) - lon1 * nl as f64 + 0.5).floor() as i32;
     let mut rlon = if odd_recent {
         dlon * (cpr_mod(m, ni) as f64 + lon1)
@@ -550,10 +552,11 @@ fn cpr_nl(lat: f64) -> i32 {
 }
 
 /// Local CPR decode — single frame relative to a reference point (readsb decodeCPRrelative)
-fn cpr_relative(reflat: f64, reflon: f64, cprlat: u32, cprlon: u32, odd: bool) -> Option<(f64, f64)> {
+fn cpr_relative(reflat: f64, reflon: f64, cprlat: u32, cprlon: u32, odd: bool, surface: bool) -> Option<(f64, f64)> {
+    let scale = if surface { 90.0 } else { 360.0 };
     let frac_lat = cprlat as f64 / 131072.0;
     let frac_lon = cprlon as f64 / 131072.0;
-    let air_dlat = 360.0 / if odd { 59.0 } else { 60.0 };
+    let air_dlat = scale / if odd { 59.0 } else { 60.0 };
 
     let j = (reflat / air_dlat).floor() + (0.5 + fmod(reflat, air_dlat) / air_dlat - frac_lat).floor();
     let mut rlat = air_dlat * (j + frac_lat);
@@ -563,7 +566,7 @@ fn cpr_relative(reflat: f64, reflon: f64, cprlat: u32, cprlon: u32, odd: bool) -
 
     let nl = cpr_nl(rlat);
     let ni = if odd { (nl - 1).max(1) } else { nl.max(1) };
-    let air_dlon = 360.0 / ni as f64;
+    let air_dlon = scale / ni as f64;
     let m = (reflon / air_dlon).floor() + (0.5 + fmod(reflon, air_dlon) / air_dlon - frac_lon).floor();
     let mut rlon = air_dlon * (m + frac_lon);
     if rlon > 180.0 { rlon -= 360.0; }

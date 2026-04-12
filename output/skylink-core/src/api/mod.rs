@@ -606,13 +606,17 @@ async fn ais_stats_json(State(store): State<Arc<crate::ais::vessel::VesselStore>
 }
 
 fn combined_stats(ac: Option<Arc<Store>>, vs: Option<Arc<crate::ais::vessel::VesselStore>>) -> Response {
+    let t = now_secs();
     let mut out = String::from("{");
     let mut first = true;
     if let Some(s) = ac {
         let total = s.map.len();
         let with_pos = s.map.iter().filter(|e| e.value().lat.is_some()).count();
+        let recent = s.map.iter().filter(|e| t - e.value().last_update < 60.0).count();
+        let recent_pos = s.map.iter().filter(|e| e.value().lat.is_some() && t - e.value().last_update < 60.0).count();
         let msgs = s.messages_total.load(std::sync::atomic::Ordering::Relaxed);
-        out.push_str(&format!("\"aircraft_total\":{total},\"aircraft_with_pos\":{with_pos},\"aircraft_messages\":{msgs}"));
+        let uptime = t - s.start_time;
+        out.push_str(&format!("\"aircraft_total\":{total},\"aircraft_with_pos\":{with_pos},\"aircraft_recent\":{recent},\"aircraft_recent_pos\":{recent_pos},\"aircraft_messages\":{msgs},\"uptime\":{uptime:.0}"));
         first = false;
     }
     if let Some(s) = vs {
