@@ -788,15 +788,17 @@ h1{{color:#00d4ff;font-size:20px;margin-bottom:4px}}
 <div class="endpoints">
 <h2>API Endpoints</h2>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/stats" style="color:#00d4ff">/stats</a></span><span class="desc">combined stats JSON</span></div>
-<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/aircraft.json" style="color:#00d4ff">/data/aircraft.json</a></span><span class="desc">all aircraft</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/aircraft.json" style="color:#00d4ff">/data/aircraft.json</a></span><span class="desc">all aircraft (supports ?tier=1|2|3 &amp; ?box=S,N,W,E)</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/api/vessels.json" style="color:#00d4ff">/api/vessels.json</a></span><span class="desc">all vessels (supports ?tier=1|2|3 &amp; ?box=S,N,W,E)</span></div>
+<div class="ep"><span class="method">GET</span><span class="path">/api/aircraft/{{hex}}</span><span class="desc">single aircraft stats</span></div>
+<div class="ep"><span class="method">GET</span><span class="path">/api/vessel?mmsi={{mmsi}}</span><span class="desc">single vessel stats</span></div>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/data/aircraft.geojson" style="color:#00d4ff">/data/aircraft.geojson</a></span><span class="desc">aircraft GeoJSON</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/api/vessels.geojson" style="color:#00d4ff">/api/vessels.geojson</a></span><span class="desc">vessels GeoJSON</span></div>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/data/aircraft.binCraft" style="color:#00d4ff">/data/aircraft.binCraft</a></span><span class="desc">binary format</span></div>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/data/status.json" style="color:#00d4ff">/data/status.json</a></span><span class="desc">status (readsb compat)</span></div>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/data/status.prom" style="color:#00d4ff">/data/status.prom</a></span><span class="desc">prometheus metrics</span></div>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/data/receivers.json" style="color:#00d4ff">/data/receivers.json</a></span><span class="desc">feeder stats</span></div>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/data/clients.json" style="color:#00d4ff">/data/clients.json</a></span><span class="desc">connected clients</span></div>
-<div class="ep"><span class="method">GET</span><span class="path"><a href="/api/vessels.json" style="color:#00d4ff">/api/vessels.json</a></span><span class="desc">all vessels</span></div>
-<div class="ep"><span class="method">GET</span><span class="path"><a href="/api/vessels.geojson" style="color:#00d4ff">/api/vessels.geojson</a></span><span class="desc">vessel GeoJSON</span></div>
 <div class="ep"><span class="method">GET</span><span class="path"><a href="/api/ais_stats.json" style="color:#00d4ff">/api/ais_stats.json</a></span><span class="desc">AIS message breakdown</span></div>
 <div class="ep"><span class="method">WS</span><span class="path">/ws</span><span class="desc">aircraft live</span></div>
 <div class="ep"><span class="method">WS</span><span class="path">/ws/ais</span><span class="desc">vessel live</span></div>
