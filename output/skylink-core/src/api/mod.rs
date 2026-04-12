@@ -536,6 +536,15 @@ pub async fn serve(aircraft_store: Option<Arc<Store>>, vessel_store: Option<Arc<
         async move { combined_stats(ac, vs) }
     }));
 
+    // Dashboard endpoint
+    let ac = aircraft_store.clone();
+    let vs = vessel_store.clone();
+    app = app.route("/dashboard", get(move || {
+        let ac = ac.clone();
+        let vs = vs.clone();
+        async move { dashboard_html(ac, vs) }
+    }));
+
     app = app.layer(CorsLayer::permissive());
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await
@@ -628,4 +637,143 @@ fn combined_stats(ac: Option<Arc<Store>>, vs: Option<Arc<crate::ais::vessel::Ves
     }
     out.push('}');
     json_response(out)
+}
+
+fn dashboard_html(ac: Option<Arc<Store>>, vs: Option<Arc<crate::ais::vessel::VesselStore>>) -> Response {
+    let t = now_secs();
+
+    // Aircraft stats
+    let (ac_total, ac_pos, ac_recent, ac_recent_pos, ac_ground, ac_msgs, ac_rate, uptime, clients) =
+        if let Some(ref s) = ac {
+            let total = s.map.len();
+            let pos = s.map.iter().filter(|e| e.value().lat.is_some()).count();
+            let recent = s.map.iter().filter(|e| t - e.value().last_update < 60.0).count();
+            let recent_pos = s.map.iter().filter(|e| e.value().lat.is_some() && t - e.value().last_update < 60.0).count();
+            let ground = s.map.iter().filter(|e| e.value().on_ground && e.value().lat.is_some()).count();
+            let msgs = s.messages_total.load(std::sync::atomic::Ordering::Relaxed);
+            let up = t - s.start_time;
+            let rate = if up > 0.0 { msgs as f64 / up } else { 0.0 };
+            let cl = s.clients.read().len();
+            (total, pos, recent, recent_pos, ground, msgs, rate, up, cl)
+        } else { (0,0,0,0,0,0,0.0,0.0,0) };
+
+    // Vessel stats
+    let (vs_total, vs_pos, vs_msgs) = if let Some(ref s) = vs {
+        let total = s.map.len();
+        let pos = s.map.iter().filter(|e| e.value().lat.is_some()).count();
+        let msgs = s.messages_total.load(std::sync::atomic::Ordering::Relaxed);
+        (total, pos, msgs)
+    } else { (0,0,0) };
+
+    let pos_pct = if ac_total > 0 { ac_pos * 100 / ac_total } else { 0 };
+    let recent_pct = if ac_recent > 0 { ac_recent_pos * 100 / ac_recent } else { 0 };
+    let vs_pct = if vs_total > 0 { vs_pos * 100 / vs_total } else { 0 };
+
+    let uptime_str = if uptime >= 86400.0 {
+        format!("{:.0}d {:.0}h", uptime / 86400.0, (uptime % 86400.0) / 3600.0)
+    } else if uptime >= 3600.0 {
+        format!("{:.0}h {:.0}m", uptime / 3600.0, (uptime % 3600.0) / 60.0)
+    } else {
+        format!("{:.0}m {:.0}s", uptime / 60.0, uptime % 60.0)
+    };
+
+    let html = format!(r##"<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>skylink-core dashboard</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:'SF Mono',Consolas,'Courier New',monospace;background:#0a0a0a;color:#e0e0e0;padding:20px;font-size:14px}}
+h1{{color:#00d4ff;font-size:20px;margin-bottom:4px}}
+.sub{{color:#666;font-size:12px;margin-bottom:20px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-bottom:20px}}
+.card{{background:#111;border:1px solid #222;border-radius:8px;padding:16px}}
+.card h2{{color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}}
+.row{{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a1a1a}}
+.row:last-child{{border:none}}
+.label{{color:#888}}.val{{color:#fff;font-weight:bold}}
+.val.green{{color:#00ff88}}.val.blue{{color:#00d4ff}}.val.yellow{{color:#ffd700}}.val.dim{{color:#666}}
+.bar{{height:6px;background:#1a1a1a;border-radius:3px;margin-top:8px}}
+.bar-fill{{height:100%;border-radius:3px;transition:width 0.5s}}
+.bar-fill.green{{background:#00ff88}}.bar-fill.blue{{background:#00d4ff}}
+.endpoints{{background:#111;border:1px solid #222;border-radius:8px;padding:16px}}
+.endpoints h2{{color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}}
+.ep{{display:flex;gap:8px;padding:3px 0;font-size:12px}}
+.ep .method{{color:#00ff88;width:36px}}.ep .path{{color:#00d4ff}}
+.ep .desc{{color:#555;margin-left:auto}}
+.refresh{{color:#333;font-size:11px;text-align:right;margin-top:12px}}
+</style>
+</head><body>
+<h1>⚡ skylink-core V8</h1>
+<div class="sub">ADS-B + AIS aggregator engine — Rust • uptime {uptime_str} • {clients} feeders</div>
+
+<div class="grid">
+<div class="card">
+<h2>✈ Aircraft — Store</h2>
+<div class="row"><span class="label">total in store</span><span class="val">{ac_total}</span></div>
+<div class="row"><span class="label">with position</span><span class="val green">{ac_pos}</span></div>
+<div class="row"><span class="label">position rate</span><span class="val green">{pos_pct}%</span></div>
+<div class="row"><span class="label">on ground</span><span class="val yellow">{ac_ground}</span></div>
+<div class="bar"><div class="bar-fill green" style="width:{pos_pct}%"></div></div>
+</div>
+
+<div class="card">
+<h2>✈ Aircraft — Live (60s)</h2>
+<div class="row"><span class="label">seen last 60s</span><span class="val">{ac_recent}</span></div>
+<div class="row"><span class="label">with position</span><span class="val blue">{ac_recent_pos}</span></div>
+<div class="row"><span class="label">position rate</span><span class="val blue">{recent_pct}%</span></div>
+<div class="row"><span class="label">messages</span><span class="val dim">{ac_msgs}</span></div>
+<div class="row"><span class="label">msg/sec</span><span class="val dim">{ac_rate:.0}</span></div>
+<div class="bar"><div class="bar-fill blue" style="width:{recent_pct}%"></div></div>
+</div>
+
+<div class="card">
+<h2>🚢 Vessels — AIS</h2>
+<div class="row"><span class="label">total in store</span><span class="val">{vs_total}</span></div>
+<div class="row"><span class="label">with position</span><span class="val green">{vs_pos}</span></div>
+<div class="row"><span class="label">position rate</span><span class="val green">{vs_pct}%</span></div>
+<div class="row"><span class="label">messages</span><span class="val dim">{vs_msgs}</span></div>
+<div class="bar"><div class="bar-fill green" style="width:{vs_pct}%"></div></div>
+</div>
+
+<div class="card">
+<h2>⚙ Engine</h2>
+<div class="row"><span class="label">version</span><span class="val">skylink-core V8</span></div>
+<div class="row"><span class="label">uptime</span><span class="val">{uptime_str}</span></div>
+<div class="row"><span class="label">feeders</span><span class="val">{clients}</span></div>
+<div class="row"><span class="label">store TTL</span><span class="val dim">aircraft 300s / vessel 1800s</span></div>
+<div class="row"><span class="label">CPR decode</span><span class="val dim">global + local + surface</span></div>
+<div class="row"><span class="label">AIS decode</span><span class="val dim">types 1-9,11,14,18,19,21,24,27</span></div>
+</div>
+</div>
+
+<div class="endpoints">
+<h2>API Endpoints</h2>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/stats" style="color:#00d4ff">/stats</a></span><span class="desc">combined stats JSON</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/aircraft.json" style="color:#00d4ff">/data/aircraft.json</a></span><span class="desc">all aircraft</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/aircraft.geojson" style="color:#00d4ff">/data/aircraft.geojson</a></span><span class="desc">aircraft GeoJSON</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/aircraft.binCraft" style="color:#00d4ff">/data/aircraft.binCraft</a></span><span class="desc">binary format</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/status.json" style="color:#00d4ff">/data/status.json</a></span><span class="desc">status (readsb compat)</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/status.prom" style="color:#00d4ff">/data/status.prom</a></span><span class="desc">prometheus metrics</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/receivers.json" style="color:#00d4ff">/data/receivers.json</a></span><span class="desc">feeder stats</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/data/clients.json" style="color:#00d4ff">/data/clients.json</a></span><span class="desc">connected clients</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/api/vessels.json" style="color:#00d4ff">/api/vessels.json</a></span><span class="desc">all vessels</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/api/vessels.geojson" style="color:#00d4ff">/api/vessels.geojson</a></span><span class="desc">vessel GeoJSON</span></div>
+<div class="ep"><span class="method">GET</span><span class="path"><a href="/api/ais_stats.json" style="color:#00d4ff">/api/ais_stats.json</a></span><span class="desc">AIS message breakdown</span></div>
+<div class="ep"><span class="method">WS</span><span class="path">/ws</span><span class="desc">aircraft live</span></div>
+<div class="ep"><span class="method">WS</span><span class="path">/ws/ais</span><span class="desc">vessel live</span></div>
+<div class="ep"><span class="method">WS</span><span class="path">/ws/unified</span><span class="desc">combined live</span></div>
+<div class="ep"><span class="method">POST</span><span class="path">/mcp/search</span><span class="desc">AI search aircraft</span></div>
+<div class="ep"><span class="method">POST</span><span class="path">/mcp/vessel_search</span><span class="desc">AI search vessels</span></div>
+</div>
+
+<div class="refresh">auto-refresh 5s • <a href="/stats" style="color:#333">JSON</a></div>
+<script>setTimeout(()=>location.reload(),5000)</script>
+</body></html>"##);
+
+    Response::builder()
+        .header("content-type", "text/html; charset=utf-8")
+        .body(axum::body::Body::from(html))
+        .unwrap()
+        .into_response()
 }
