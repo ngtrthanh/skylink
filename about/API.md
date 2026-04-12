@@ -193,6 +193,8 @@ services:
 
 | Tag | Date | Highlights |
 |---|---|---|
+| v4.5.3 | 2026-04-12 | Fixed tier 1/2 frontend timeout issue: explicitly serialize `seen` and `seen_pos`, and strict bounds filtering for stale signals |
+| v4.5 | 2026-04-12 | Aircraft tiered JSON endpoints (`?tier=1`, `?tier=2`), bounds filtering (`?box=S,N,W,E`) directly injected into APIs, surface CPR decode |
 | v4.1 | 2026-04-11 | receivers.json with fasthash64 UUID, per-frame receiver ID from Beast 0xe3, multi-source NMEA, BSVDM support, 1800s vessel freshness |
 | v4.0 | 2026-03-28 | v4 rewrite: unified WS, MCP endpoints, AIS integration, vessel sprites, state persistence |
 | v2-final | — | Legacy C-based version |
