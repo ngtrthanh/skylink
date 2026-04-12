@@ -187,7 +187,10 @@ async fn re_api(State(store): State<Arc<Store>>, Query(params): Query<HashMap<St
         if all_with_pos && ac.lat.is_none() { return None; }
         if let Some((s, n, w, e)) = bbox {
             match (ac.lat, ac.lon) {
-                (Some(lat), Some(lon)) if lat >= s && lat <= n && crate::bincraft::lon_in_box(lon, w, e) => {}
+                (Some(lat), Some(lon)) if lat >= s && lat <= n && crate::bincraft::lon_in_box(lon, w, e) => {
+                    let now_s = now_secs();
+                    if ac.last_pos_update == 0.0 || (now_s - ac.last_pos_update >= 60.0) { return None; }
+                }
                 _ => return None,
             }
         }

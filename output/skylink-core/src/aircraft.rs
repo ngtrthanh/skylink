@@ -420,13 +420,15 @@ pub fn build_json_filtered(store: &Store, south: f64, north: f64, west: f64, eas
     for entry in store.map.iter() {
         let ac = entry.value();
         if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
-            if lat >= south && lat <= north && crate::bincraft::lon_in_box(lon, west, east) {
-                if !first { buf.push(b','); }
-                first = false;
-                match tier {
-                    1 => aircraft_json_t1(ac, &mut buf, t),
-                    2 => aircraft_json_t2(ac, &mut buf, t),
-                    _ => aircraft_json_t3(ac, &mut buf, t),
+            if ac.last_pos_update > 0.0 && t - ac.last_pos_update < 60.0 {
+                if lat >= south && lat <= north && crate::bincraft::lon_in_box(lon, west, east) {
+                    if !first { buf.push(b','); }
+                    first = false;
+                    match tier {
+                        1 => aircraft_json_t1(ac, &mut buf, t),
+                        2 => aircraft_json_t2(ac, &mut buf, t),
+                        _ => aircraft_json_t3(ac, &mut buf, t),
+                    }
                 }
             }
         }
@@ -456,9 +458,10 @@ fn aircraft_json_t1(ac: &Aircraft, t1: &mut Vec<u8>, t: f64) {
     t1.push(b'{');
     write_str(t1, "hex", &ac.hex);
     if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
-        if t - ac.last_pos_update < 60.0 {
+        if ac.last_pos_update > 0.0 && t - ac.last_pos_update < 60.0 {
             t1.push(b','); write_float(t1, "lat", lat);
             t1.push(b','); write_float(t1, "lon", lon);
+            t1.push(b','); write_float(t1, "seen_pos", t - ac.last_pos_update);
         }
     }
     if ac.on_ground {
@@ -469,6 +472,7 @@ fn aircraft_json_t1(ac: &Aircraft, t1: &mut Vec<u8>, t: f64) {
     if let Some(ref v) = ac.category { t1.push(b','); write_str(t1, "category", v); }
     if let Some(ref v) = ac.source_type { t1.push(b','); write_str(t1, "type", v); }
     if let Some(ref v) = ac.t { t1.push(b','); write_str(t1, "t", v); }
+    t1.push(b','); write_float(t1, "seen", t - ac.last_update);
     t1.push(b'}');
 }
 
@@ -486,7 +490,7 @@ fn aircraft_json_t2(ac: &Aircraft, t2: &mut Vec<u8>, t: f64) {
     if let Some(ref v) = ac.squawk { t2.push(b','); write_str(t2, "squawk", v); }
     if let Some(ref v) = ac.category { t2.push(b','); write_str(t2, "category", v); }
     if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
-        if t - ac.last_pos_update < 60.0 {
+        if ac.last_pos_update > 0.0 && t - ac.last_pos_update < 60.0 {
             t2.push(b','); write_float(t2, "lat", lat);
             t2.push(b','); write_float(t2, "lon", lon);
             if let Some(ref v) = ac.source_type { t2.push(b','); write_str(t2, "type", v); }
