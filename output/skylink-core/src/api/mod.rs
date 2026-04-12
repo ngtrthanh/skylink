@@ -10,7 +10,19 @@ use crate::aircraft::Store;
 
 // --- Cached endpoints (pre-built every 1s) ---
 
-async fn aircraft_json(State(s): State<Arc<Store>>) -> Response { serve_cached(s.json_cache.read().clone(), "application/json") }
+async fn aircraft_json(State(s): State<Arc<Store>>, Query(params): Query<HashMap<String, String>>) -> Response {
+    let tier = params.get("tier").and_then(|v| v.parse::<u8>().ok()).unwrap_or(3);
+    if let Some(bbox) = parse_box(&params) {
+        let data = crate::aircraft::build_json_filtered(&s, bbox.0, bbox.1, bbox.2, bbox.3, tier);
+        return (StatusCode::OK, [(header::CONTENT_TYPE, "application/json"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], data).into_response();
+    }
+    let body = match tier {
+        1 => s.json_t1_cache.read().clone(),
+        2 => s.json_t2_cache.read().clone(),
+        _ => s.json_cache.read().clone(),
+    };
+    serve_cached(body, "application/json")
+}
 async fn aircraft_bincraft(State(s): State<Arc<Store>>) -> Response { serve_cached(s.bincraft_cache.read().clone(), "application/octet-stream") }
 async fn aircraft_bincraft_zst(State(s): State<Arc<Store>>) -> Response { serve_cached(s.bincraft_zstd_cache.read().clone(), "application/octet-stream") }
 async fn aircraft_json_zst(State(s): State<Arc<Store>>) -> Response { serve_cached(s.json_zstd_cache.read().clone(), "application/json") }
@@ -383,6 +395,21 @@ async fn trace_recent(State(store): State<Arc<Store>>, Path(hex): Path<String>) 
     (StatusCode::OK, [(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-cache"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], buf).into_response()
 }
 
+// Single aircraft detail
+async fn aircraft_detail(State(store): State<Arc<Store>>, Path(hex): Path<String>) -> Response {
+    let icao = match u32::from_str_radix(&hex, 16) {
+        Ok(v) => v, Err(_) => return (StatusCode::NOT_FOUND, "invalid hex").into_response(),
+    };
+    match store.map.get(&icao) {
+        Some(e) => {
+            let ac = e.value();
+            let json = serde_json::to_string(ac).unwrap_or_default();
+            json_response(json)
+        }
+        None => json_response("{\"error\":\"not found\"}".into()),
+    }
+}
+
 async fn globe_fallback(State(s): State<Arc<Store>>, axum::extract::Path(path): axum::extract::Path<String>) -> Response {
     if path.ends_with(".binCraft.zst") || path.ends_with(".binCraft.zst") {
         return serve_cached(s.bincraft_zstd_cache.read().clone(), "application/octet-stream");
@@ -486,6 +513,7 @@ pub async fn serve(aircraft_store: Option<Arc<Store>>, vessel_store: Option<Arc<
             .route("/data/receivers.json", get(receivers_json))
             .route("/data/traces/{hex}/trace_full.json", get(trace_full))
             .route("/data/traces/{hex}/trace_recent.json", get(trace_recent))
+            .route("/api/aircraft/{hex}", get(aircraft_detail))
             .route("/re-api/", get(re_api))
             .route("/ws", get(crate::ws::ws_handler))
             .route("/.well-known/mcp.json", get(crate::mcp::manifest))
@@ -555,8 +583,18 @@ pub async fn serve(aircraft_store: Option<Arc<Store>>, vessel_store: Option<Arc<
 
 // --- Vessel handlers ---
 
-async fn vessels_json(State(store): State<Arc<crate::ais::vessel::VesselStore>>) -> Response {
-    serve_cached(store.json_cache.read().clone(), "application/json")
+async fn vessels_json(State(store): State<Arc<crate::ais::vessel::VesselStore>>, Query(params): Query<HashMap<String, String>>) -> Response {
+    let tier = params.get("tier").and_then(|v| v.parse::<u8>().ok()).unwrap_or(3);
+    if let Some(bbox) = parse_box(&params) {
+        let data = store.build_json_filtered(bbox.0, bbox.1, bbox.2, bbox.3, tier);
+        return (StatusCode::OK, [(header::CONTENT_TYPE, "application/json"), (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], data).into_response();
+    }
+    let body = match tier {
+        1 => store.json_t1_cache.read().clone(),
+        2 => store.json_t2_cache.read().clone(),
+        _ => store.json_cache.read().clone(),
+    };
+    serve_cached(body, "application/json")
 }
 
 async fn vessels_geojson(State(store): State<Arc<crate::ais::vessel::VesselStore>>, Query(params): Query<HashMap<String, String>>) -> Response {

@@ -295,6 +295,8 @@ pub struct VesselStore {
     pub messages_total: AtomicU64,
     pub stats: AisStats,
     pub json_cache: parking_lot::RwLock<bytes::Bytes>,
+    pub json_t1_cache: parking_lot::RwLock<bytes::Bytes>,
+    pub json_t2_cache: parking_lot::RwLock<bytes::Bytes>,
     pub geojson_cache: parking_lot::RwLock<bytes::Bytes>,
     pub binvessel_cache: parking_lot::RwLock<bytes::Bytes>,
     pub binvessel_zstd_cache: parking_lot::RwLock<bytes::Bytes>,
@@ -307,6 +309,8 @@ impl VesselStore {
             messages_total: AtomicU64::new(0),
             stats: AisStats::new(),
             json_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
+            json_t1_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
+            json_t2_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
             geojson_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
             binvessel_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
             binvessel_zstd_cache: parking_lot::RwLock::new(bytes::Bytes::new()),
@@ -344,6 +348,8 @@ impl VesselStore {
 
     pub fn rebuild_caches(&self, store_arc: &Arc<VesselStore>) {
         *self.json_cache.write() = bytes::Bytes::from(self.build_json());
+        *self.json_t1_cache.write() = bytes::Bytes::from(self.build_json_t1());
+        *self.json_t2_cache.write() = bytes::Bytes::from(self.build_json_t2());
         *self.geojson_cache.write() = bytes::Bytes::from(self.build_geojson());
         let bin = crate::binvessel::build(store_arc);
         let zstd = zstd_compress(&bin);
@@ -362,6 +368,62 @@ impl VesselStore {
             if !first { out.push(','); }
             first = false;
             vessel_json(v, &mut out, now);
+        }
+        out.push_str("]}");
+        out.into_bytes()
+    }
+
+    fn build_json_t1(&self) -> Vec<u8> {
+        let now = now_secs();
+        let mut out = String::with_capacity(self.map.len() * 150);
+        out.push_str("{\"vessels\":[");
+        let mut first = true;
+        for entry in self.map.iter() {
+            let v = entry.value();
+            if now - v.last_signal > 1800.0 { continue; }
+            if !first { out.push(','); }
+            first = false;
+            vessel_json_t1(v, &mut out, now);
+        }
+        out.push_str("]}");
+        out.into_bytes()
+    }
+
+    fn build_json_t2(&self) -> Vec<u8> {
+        let now = now_secs();
+        let mut out = String::with_capacity(self.map.len() * 250);
+        out.push_str("{\"vessels\":[");
+        let mut first = true;
+        for entry in self.map.iter() {
+            let v = entry.value();
+            if now - v.last_signal > 1800.0 { continue; }
+            if !first { out.push(','); }
+            first = false;
+            vessel_json_t2(v, &mut out, now);
+        }
+        out.push_str("]}");
+        out.into_bytes()
+    }
+
+    pub fn build_json_filtered(&self, south: f64, north: f64, west: f64, east: f64, tier: u8) -> Vec<u8> {
+        let now = now_secs();
+        let mut out = String::with_capacity(self.map.len() * 150);
+        out.push_str("{\"vessels\":[");
+        let mut first = true;
+        for entry in self.map.iter() {
+            let v = entry.value();
+            if now - v.last_signal > 1800.0 { continue; }
+            let (lat, lon) = match (v.lat, v.lon) { (Some(a), Some(b)) => (a as f64, b as f64), _ => continue };
+            if lat < south || lat > north { continue; }
+            let lon_ok = if west <= east { lon >= west && lon <= east } else { lon >= west || lon <= east };
+            if !lon_ok { continue; }
+            if !first { out.push(','); }
+            first = false;
+            match tier {
+                1 => vessel_json_t1(v, &mut out, now),
+                2 => vessel_json_t2(v, &mut out, now),
+                _ => vessel_json(v, &mut out, now),
+            }
         }
         out.push_str("]}");
         out.into_bytes()
@@ -504,6 +566,42 @@ fn write_geojson_feature(v: &Vessel, lat: f32, lon: f32, out: &mut String, now: 
 }
 
 pub fn vessel_json_pub(v: &Vessel, out: &mut String, now: f64) { vessel_json(v, out, now); }
+
+fn vessel_json_t1(v: &Vessel, out: &mut String, _now: f64) {
+    out.push_str(&format!("{{\"mmsi\":{}", v.mmsi));
+    if let Some(lat) = v.lat { out.push_str(&format!(",\"lat\":{lat}")); }
+    if let Some(lon) = v.lon { out.push_str(&format!(",\"lon\":{lon}")); }
+    if let Some(s) = v.speed { out.push_str(&format!(",\"speed\":{s:.1}")); }
+    if let Some(c) = v.cog { out.push_str(&format!(",\"cog\":{c:.1}")); }
+    out.push_str(&format!(",\"shipclass\":{},\"type_class\":\"{}\"}}", v.shipclass, v.type_class()));
+}
+
+fn vessel_json_t2(v: &Vessel, out: &mut String, now: f64) {
+    out.push_str(&format!("{{\"mmsi\":{}", v.mmsi));
+    if let Some(lat) = v.lat { out.push_str(&format!(",\"lat\":{lat}")); }
+    if let Some(lon) = v.lon { out.push_str(&format!(",\"lon\":{lon}")); }
+    if let Some(s) = v.speed { out.push_str(&format!(",\"speed\":{s:.1}")); }
+    if let Some(c) = v.cog { out.push_str(&format!(",\"cog\":{c:.1}")); }
+    if let Some(h) = v.heading { out.push_str(&format!(",\"heading\":{h}")); }
+    if let Some(s) = v.status { out.push_str(&format!(",\"status\":{s}")); }
+    if let Some(s) = v.status {
+        let st = match s {
+            0 => "Under way using engine", 1 => "At anchor", 2 => "Not under command",
+            3 => "Restricted manoeuvrability", 4 => "Constrained by draught",
+            5 => "Moored", 6 => "Aground", 7 => "Engaged in fishing",
+            8 => "Under way sailing", 14 => "AIS-SART", _ => "",
+        };
+        if !st.is_empty() { out.push_str(&format!(",\"status_text\":\"{st}\"")); }
+    }
+    if !v.shipname.is_empty() { out.push_str(&format!(",\"shipname\":\"{}\"", esc(&v.shipname))); }
+    out.push_str(&format!(",\"shiptype\":{},\"type_class\":\"{}\",\"shipclass\":{},\"class_name\":\"{}\",\"country\":\"{}\"",
+        v.shiptype, v.type_class(), v.shipclass, v.class_name(), v.country));
+    if let (Some(bow), Some(stern)) = (v.to_bow, v.to_stern) {
+        let len = bow + stern;
+        if len > 0 { out.push_str(&format!(",\"length\":{len}")); }
+    }
+    out.push_str(&format!(",\"last_signal\":{:.0}}}", now - v.last_signal));
+}
 
 fn vessel_json(v: &Vessel, out: &mut String, now: f64) {
     out.push_str(&format!("{{\"mmsi\":{}", v.mmsi));

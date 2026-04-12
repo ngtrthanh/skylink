@@ -95,6 +95,9 @@ pub struct Store {
     pub max_range_m: f64,
     /// Pre-built JSON response — updated every ~1s by json_builder
     pub json_cache: RwLock<bytes::Bytes>,
+    /// Tier 1 (overview) and Tier 2 (regional) JSON caches
+    pub json_t1_cache: RwLock<bytes::Bytes>,
+    pub json_t2_cache: RwLock<bytes::Bytes>,
     /// Pre-built binCraft response — updated every ~1s
     pub bincraft_cache: RwLock<bytes::Bytes>,
     /// Pre-built zstd-compressed caches
@@ -182,6 +185,8 @@ impl Store {
             receiver_lon: lon,
             max_range_m: max_range_nm * 1852.0,
             json_cache: RwLock::new(bytes::Bytes::from_static(b"{\"now\":0,\"messages\":0,\"aircraft\":[]}")),
+            json_t1_cache: RwLock::new(bytes::Bytes::new()),
+            json_t2_cache: RwLock::new(bytes::Bytes::new()),
             bincraft_cache: RwLock::new(bytes::Bytes::new()),
             json_zstd_cache: RwLock::new(bytes::Bytes::new()),
             bincraft_zstd_cache: RwLock::new(bytes::Bytes::new()),
@@ -435,11 +440,41 @@ impl Store {
         buf.extend_from_slice(b"]}");
 
         *self.json_cache.write() = bytes::Bytes::from(buf);
+
+        // Tier 1: overview (8 fields)
+        let mut t1 = Vec::with_capacity(count * 120 + 200);
+        t1.extend_from_slice(b"{\"now\":");
+        t1.extend_from_slice(format!("{:.1}", t).as_bytes());
+        t1.extend_from_slice(b",\"aircraft\":[");
+        let mut first = true;
+        for entry in self.map.iter() {
+            let ac = entry.value();
+            if !first { t1.push(b','); }
+            first = false;
+            aircraft_json_t1(ac, &mut t1, t);
+        }
+        t1.extend_from_slice(b"]}");
+        *self.json_t1_cache.write() = bytes::Bytes::from(t1);
+
+        // Tier 2: regional (18 fields)
+        let mut t2 = Vec::with_capacity(count * 300 + 200);
+        t2.extend_from_slice(b"{\"now\":");
+        t2.extend_from_slice(format!("{:.1}", t).as_bytes());
+        t2.extend_from_slice(b",\"aircraft\":[");
+        let mut first = true;
+        for entry in self.map.iter() {
+            let ac = entry.value();
+            if !first { t2.push(b','); }
+            first = false;
+            aircraft_json_t2(ac, &mut t2, t);
+        }
+        t2.extend_from_slice(b"]}");
+        *self.json_t2_cache.write() = bytes::Bytes::from(t2);
     }
 }
 
 /// Build JSON filtered by bounding box
-pub fn build_json_filtered(store: &Store, south: f64, north: f64, west: f64, east: f64) -> Vec<u8> {
+pub fn build_json_filtered(store: &Store, south: f64, north: f64, west: f64, east: f64, tier: u8) -> Vec<u8> {
     let t = now();
     let total_msgs = store.messages_total.load(std::sync::atomic::Ordering::Relaxed);
     let mut buf = Vec::with_capacity(256 * 1024);
@@ -455,8 +490,11 @@ pub fn build_json_filtered(store: &Store, south: f64, north: f64, west: f64, eas
             if lat >= south && lat <= north && crate::bincraft::lon_in_box(lon, west, east) {
                 if !first { buf.push(b','); }
                 first = false;
-                // Reuse serde for filtered (not hot path)
-                buf.extend_from_slice(&serde_json::to_vec(ac).unwrap_or_default());
+                match tier {
+                    1 => aircraft_json_t1(ac, &mut buf, t),
+                    2 => aircraft_json_t2(ac, &mut buf, t),
+                    _ => buf.extend_from_slice(&serde_json::to_vec(ac).unwrap_or_default()),
+                }
             }
         }
     }
@@ -481,6 +519,55 @@ fn write_float(buf: &mut Vec<u8>, key: &str, val: f64) {
     buf.push(b'"'); buf.extend_from_slice(key.as_bytes()); buf.extend_from_slice(b"\":");
     buf.extend_from_slice(format!("{:.6}", val).trim_end_matches('0').trim_end_matches('.').as_bytes());
 }
+fn aircraft_json_t1(ac: &Aircraft, t1: &mut Vec<u8>, t: f64) {
+    t1.push(b'{');
+    write_str(t1, "hex", &ac.hex);
+    if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
+        if t - ac.last_pos_update < 60.0 {
+            t1.push(b','); write_float(t1, "lat", lat);
+            t1.push(b','); write_float(t1, "lon", lon);
+        }
+    }
+    if ac.on_ground {
+        t1.extend_from_slice(b",\"alt_baro\":\"ground\"");
+    } else if let Some(v) = ac.alt_baro { t1.push(b','); write_int(t1, "alt_baro", v); }
+    if let Some(v) = ac.gs { t1.push(b','); write_float(t1, "gs", v); }
+    if let Some(v) = ac.track { t1.push(b','); write_float(t1, "track", v); }
+    if let Some(ref v) = ac.category { t1.push(b','); write_str(t1, "category", v); }
+    if let Some(ref v) = ac.source_type { t1.push(b','); write_str(t1, "type", v); }
+    if let Some(ref v) = ac.t { t1.push(b','); write_str(t1, "t", v); }
+    t1.push(b'}');
+}
+
+fn aircraft_json_t2(ac: &Aircraft, t2: &mut Vec<u8>, t: f64) {
+    t2.push(b'{');
+    write_str(t2, "hex", &ac.hex);
+    if let Some(ref f) = ac.flight { t2.push(b','); write_str(t2, "flight", f); }
+    if ac.on_ground {
+        t2.extend_from_slice(b",\"alt_baro\":\"ground\"");
+    } else if let Some(v) = ac.alt_baro { t2.push(b','); write_int(t2, "alt_baro", v); }
+    if let Some(v) = ac.alt_geom { t2.push(b','); write_int(t2, "alt_geom", v); }
+    if let Some(v) = ac.gs { t2.push(b','); write_float(t2, "gs", v); }
+    if let Some(v) = ac.track { t2.push(b','); write_float(t2, "track", v); }
+    if let Some(v) = ac.baro_rate { t2.push(b','); write_int(t2, "baro_rate", v); }
+    if let Some(ref v) = ac.squawk { t2.push(b','); write_str(t2, "squawk", v); }
+    if let Some(ref v) = ac.category { t2.push(b','); write_str(t2, "category", v); }
+    if let (Some(lat), Some(lon)) = (ac.lat, ac.lon) {
+        if t - ac.last_pos_update < 60.0 {
+            t2.push(b','); write_float(t2, "lat", lat);
+            t2.push(b','); write_float(t2, "lon", lon);
+            if let Some(ref v) = ac.source_type { t2.push(b','); write_str(t2, "type", v); }
+            t2.push(b','); write_float(t2, "seen_pos", t - ac.last_pos_update);
+        }
+    }
+    if let Some(ref v) = ac.r { t2.push(b','); write_str(t2, "r", v); }
+    if let Some(ref v) = ac.t { t2.push(b','); write_str(t2, "t", v); }
+    t2.push(b','); write_float(t2, "seen", t - ac.last_update);
+    if let Some(v) = ac.rssi { t2.push(b','); write_float(t2, "rssi", v); }
+    t2.push(b','); write_u64(t2, "messages", ac.messages);
+    t2.push(b'}');
+}
+
 
 // --- CPR global decode ---
 fn cpr_global(elat: u32, elon: u32, olat: u32, olon: u32, odd_recent: bool, surface: bool) -> Option<(f64, f64)> {
