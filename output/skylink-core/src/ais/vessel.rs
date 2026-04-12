@@ -104,6 +104,15 @@ pub struct VesselUpdate {
     pub eta_minute: Option<u8>,
     pub altitude: Option<u16>,
     pub text: Option<String>,
+    pub epfd: Option<u8>,
+    pub ais_version: Option<u8>,
+    pub dte: Option<u8>,
+    pub maneuver: Option<u8>,
+    pub raim: Option<bool>,
+    pub virtual_aid: Option<bool>,
+    pub off_position: Option<bool>,
+    pub aid_type: Option<u8>,
+    pub mothership_mmsi: Option<u32>,
 }
 
 // --- Vessel ---
@@ -133,6 +142,15 @@ pub struct Vessel {
     pub eta_hour: Option<u8>,
     pub eta_minute: Option<u8>,
     pub altitude: Option<u16>,
+    pub epfd: Option<u8>,
+    pub ais_version: Option<u8>,
+    pub dte: Option<u8>,
+    pub maneuver: Option<u8>,
+    pub raim: Option<bool>,
+    pub virtual_aid: Option<bool>,
+    pub off_position: Option<bool>,
+    pub aid_type: Option<u8>,
+    pub mothership_mmsi: Option<u32>,
     pub country: String,
     pub count: u32,
     pub last_signal: f64,
@@ -148,6 +166,9 @@ impl Vessel {
             status: None, turn: None, shiptype: 0, shipclass: 0,
             shipname: String::new(), callsign: String::new(), destination: String::new(),
             imo: None, draught: None, altitude: None,
+            epfd: None, ais_version: None, dte: None, maneuver: None,
+            raim: None, virtual_aid: None, off_position: None,
+            aid_type: None, mothership_mmsi: None,
             to_bow: None, to_stern: None, to_port: None, to_starboard: None,
             eta_month: None, eta_day: None, eta_hour: None, eta_minute: None,
             count: 0, last_signal: 0.0, last_pos_update: 0.0,
@@ -202,6 +223,15 @@ impl Vessel {
         if let Some(v) = u.eta_day { self.eta_day = Some(v); }
         if let Some(v) = u.eta_hour { self.eta_hour = Some(v); }
         if let Some(v) = u.eta_minute { self.eta_minute = Some(v); }
+        if let Some(v) = u.epfd { self.epfd = Some(v); }
+        if let Some(v) = u.ais_version { self.ais_version = Some(v); }
+        if let Some(v) = u.dte { self.dte = Some(v); }
+        if let Some(v) = u.maneuver { self.maneuver = Some(v); }
+        if let Some(v) = u.raim { self.raim = Some(v); }
+        if let Some(v) = u.virtual_aid { self.virtual_aid = Some(v); }
+        if let Some(v) = u.off_position { self.off_position = Some(v); }
+        if let Some(v) = u.aid_type { self.aid_type = Some(v); }
+        if let Some(v) = u.mothership_mmsi { self.mothership_mmsi = Some(v); }
     }
 
     pub fn type_class(&self) -> &'static str { ship_type_class(self.shiptype) }
@@ -498,7 +528,41 @@ fn vessel_json(v: &Vessel, out: &mut String, now: f64) {
     if v.eta_month.is_some() {
         out.push_str(&format!(",\"eta_month\":{},\"eta_day\":{},\"eta_hour\":{},\"eta_minute\":{}",
             v.eta_month.unwrap_or(0), v.eta_day.unwrap_or(0), v.eta_hour.unwrap_or(0), v.eta_minute.unwrap_or(0)));
+        let (m, d, h, mi) = (v.eta_month.unwrap_or(0), v.eta_day.unwrap_or(0), v.eta_hour.unwrap_or(24), v.eta_minute.unwrap_or(60));
+        if m > 0 && d > 0 && h < 24 && mi < 60 {
+            out.push_str(&format!(",\"eta\":\"{m:02}-{d:02}T{h:02}:{mi:02}Z\""));
+        }
     }
+    // Computed: length, beam
+    if let (Some(bow), Some(stern)) = (v.to_bow, v.to_stern) {
+        let len = bow + stern;
+        if len > 0 { out.push_str(&format!(",\"length\":{len}")); }
+    }
+    if let (Some(port), Some(star)) = (v.to_port, v.to_starboard) {
+        let beam = port + star;
+        if beam > 0 { out.push_str(&format!(",\"beam\":{beam}")); }
+    }
+    // Status text
+    if let Some(s) = v.status {
+        let st = match s {
+            0 => "Under way using engine", 1 => "At anchor", 2 => "Not under command",
+            3 => "Restricted manoeuvrability", 4 => "Constrained by draught",
+            5 => "Moored", 6 => "Aground", 7 => "Engaged in fishing",
+            8 => "Under way sailing", 14 => "AIS-SART", _ => "",
+        };
+        if !st.is_empty() { out.push_str(&format!(",\"status_text\":\"{st}\"")); }
+    }
+    // New decoded fields
+    if let Some(t) = v.turn { out.push_str(&format!(",\"turn\":{t}")); }
+    if let Some(v) = v.epfd { out.push_str(&format!(",\"epfd\":{v}")); }
+    if let Some(v) = v.ais_version { out.push_str(&format!(",\"ais_version\":{v}")); }
+    if let Some(v) = v.dte { out.push_str(&format!(",\"dte\":{v}")); }
+    if let Some(v) = v.maneuver { out.push_str(&format!(",\"maneuver\":{v}")); }
+    if let Some(v) = v.raim { out.push_str(&format!(",\"raim\":{v}")); }
+    if let Some(v) = v.virtual_aid { out.push_str(&format!(",\"virtual_aid\":{v}")); }
+    if let Some(v) = v.off_position { out.push_str(&format!(",\"off_position\":{v}")); }
+    if let Some(v) = v.aid_type { out.push_str(&format!(",\"aid_type\":{v}")); }
+    if let Some(v) = v.mothership_mmsi { out.push_str(&format!(",\"mothership_mmsi\":{v}")); }
     out.push_str(&format!(",\"count\":{},\"path_count\":{},\"last_signal\":{:.0}}}", v.count, v.path.len, now - v.last_signal));
 }
 

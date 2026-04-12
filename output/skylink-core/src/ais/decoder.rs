@@ -44,6 +44,8 @@ fn decode_pos_a(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
         heading: if hdg == 511 { None } else { Some(hdg as u16) },
         status: Some(status),
         turn: if rot_raw == -128 { None } else { Some(rot_raw as i16) },
+        maneuver: { let v = get_uint(b, 143, 2) as u8; if v == 0 { None } else { Some(v) } },
+        raim: Some(get_uint(b, 148, 1) == 1),
         shipclass: 1, // Class A
         ..Default::default()
     })
@@ -54,6 +56,7 @@ fn decode_static_a(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
     Some(VesselUpdate {
         mmsi,
         msg_type: 5,
+        ais_version: Some(get_uint(b, 38, 2) as u8),
         imo: { let v = get_uint(b, 40, 30); if v == 0 { None } else { Some(v) } },
         callsign: Some(get_string(b, 70, 42)),
         shipname: Some(get_string(b, 112, 120)),
@@ -63,6 +66,8 @@ fn decode_static_a(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
         to_port: Some(get_uint(b, 258, 6) as u16),
         to_starboard: Some(get_uint(b, 264, 6) as u16),
         draught: { let v = get_uint(b, 294, 8); if v == 0 { None } else { Some(v as f32 / 10.0) } },
+        epfd: Some(get_uint(b, 270, 4) as u8),
+        dte: Some(get_uint(b, 422, 1) as u8),
         eta_month: Some(get_uint(b, 274, 4) as u8),
         eta_day: Some(get_uint(b, 278, 5) as u8),
         eta_hour: Some(get_uint(b, 283, 5) as u8),
@@ -132,7 +137,16 @@ fn decode_aton(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
         lat: if lat == 0x3412140 { None } else { Some(lat as f32 / 600000.0) },
         lon: if lon == 0x6791AC0 { None } else { Some(lon as f32 / 600000.0) },
         shipname: Some(get_string(b, 40, 120)),
-        shiptype: Some(get_uint(b, 38, 5) as u8), // ATON type in type field
+        aid_type: Some(get_uint(b, 38, 5) as u8),
+        shiptype: Some(get_uint(b, 38, 5) as u8),
+        raim: Some(get_uint(b, 268, 1) == 1),
+        virtual_aid: Some(get_uint(b, 269, 1) == 1),
+        off_position: Some(get_uint(b, 219, 1) == 1),
+        to_bow: Some(get_uint(b, 219+1, 9) as u16),
+        to_stern: Some(get_uint(b, 228+1, 9) as u16),
+        to_port: Some(get_uint(b, 237+1, 6) as u16),
+        to_starboard: Some(get_uint(b, 243+1, 6) as u16),
+        epfd: Some(get_uint(b, 249+1, 4) as u8),
         shipclass: 5, // ATON
         ..Default::default()
     })
@@ -160,6 +174,7 @@ fn decode_static_b(b: &[u8], mmsi: u32) -> Option<VesselUpdate> {
                 to_stern: Some(get_uint(b, 141, 9) as u16),
                 to_port: Some(get_uint(b, 150, 6) as u16),
                 to_starboard: Some(get_uint(b, 156, 6) as u16),
+                mothership_mmsi: { let v = get_uint(b, 132+30, 30); if v == 0 { None } else { Some(v) } },
                 shipclass: 2,
                 ..Default::default()
             })
